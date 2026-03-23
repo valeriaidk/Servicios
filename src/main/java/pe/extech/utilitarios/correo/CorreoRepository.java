@@ -9,12 +9,13 @@ import java.util.Map;
 /**
  * Repositorio Correo.
  *
- * CorreoService usa JavaMailSender (SMTP configurado en application.properties),
- * por lo que no necesita token ni endpoint de BD. Solo requiere ApiServicesFuncionId
- * para registrar el consumo en IT_Consumo.
+ * CorreoService usa Microsoft Graph (OAuth2 client_credentials) para el envío.
+ * Requiere:
+ *   - ApiServicesFuncionId (CORREO_ENVIO) para registrar consumo en IT_Consumo.
+ *   - ClientSecret cifrado AES-256 de IT_ApiExternaFuncion (Codigo = MICROSOFT_GRAPH_CORREO).
  *
- * uspResolverApiExternaPorUsuarioYFuncion no aplica aquí porque CORREO_ENVIO
- * no tiene IT_ApiAsignacion (usa SMTP, no un proveedor HTTP externo registrado en BD).
+ * Los identificadores públicos (clientId, tenantId, outlookUser) vienen de
+ * application.properties vía @Value en CorreoService — no se almacenan en BD.
  */
 @Repository
 public class CorreoRepository {
@@ -25,6 +26,28 @@ public class CorreoRepository {
 
     public CorreoRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * Obtiene el ClientSecret cifrado AES-256 almacenado en IT_ApiExternaFuncion
+     * para el proveedor MICROSOFT_GRAPH_CORREO.
+     *
+     * El valor retornado es el token cifrado — CorreoService lo descifra con AesUtil
+     * en tiempo de ejecución. Nunca se loguea ni persiste el valor plano.
+     *
+     * @throws IllegalStateException si el registro no existe o el Token es nulo.
+     */
+    public String obtenerClientSecretCifrado() {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT Token FROM dbo.IT_ApiExternaFuncion " +
+                "WHERE Codigo = 'MICROSOFT_GRAPH_CORREO' AND Activo = 1 AND Eliminado = 0");
+
+        if (rows.isEmpty() || rows.get(0).get("Token") == null) {
+            throw new IllegalStateException(
+                    "ClientSecret de Microsoft Graph no configurado en IT_ApiExternaFuncion " +
+                    "(Codigo='MICROSOFT_GRAPH_CORREO'). Guardarlo cifrado via PUT /admin/apis-externas/actualizar.");
+        }
+        return (String) rows.get(0).get("Token");
     }
 
     /**

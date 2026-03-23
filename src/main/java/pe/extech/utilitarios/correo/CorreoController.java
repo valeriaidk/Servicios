@@ -13,7 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import pe.extech.utilitarios.correo.dto.CorreoRequest;
 import pe.extech.utilitarios.correo.dto.CorreoResponse;
 
-@Tag(name = "Servicios - Correo", description = "Envío de correo electrónico. Requiere API Key.")
+@Tag(name = "Servicios - Correo", description = "Envío de correo electrónico. Requiere JWT + API Key.")
+@SecurityRequirement(name = "bearerAuth")
 @SecurityRequirement(name = "apiKeyAuth")
 @RestController
 @RequestMapping("/api/v1/servicios/correo")

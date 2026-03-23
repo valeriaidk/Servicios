@@ -11,25 +11,28 @@ import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 import pe.extech.utilitarios.exception.ProveedorExternoException;
 import pe.extech.utilitarios.exception.ServicioNoDisponibleException;
-import pe.extech.utilitarios.sunat.dto.SunatRequest;
 import pe.extech.utilitarios.sunat.dto.SunatResponse;
 import pe.extech.utilitarios.util.AesUtil;
 import pe.extech.utilitarios.util.PlanContext;
 import pe.extech.utilitarios.util.ValidadorUtil;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 /**
  * Servicio SUNAT — consulta de contribuyentes por RUC vía Decolecta.
  *
  * Flujo (R2 — 1 request = 1 consumo en IT_Consumo):
- * 1. Resolver configuración del proveedor vía SP (ApiServicesFuncionId + token AES)
- * 2. Validar límite de plan (Regla 9: sin plan activo → bloquear)
- * 3. Validar RUC localmente (evita cobros por datos inválidos al proveedor)
- * 4. Llamar a Decolecta con token descifrado AES
+ * 1. Validar RUC localmente (evita cobros por datos inválidos — §14.4)
+ * 2. Resolver configuración del proveedor vía SP (ApiServicesFuncionId + token AES)
+ * 3. Validar límite de plan (Regla 9: sin plan activo → bloquear)
+ * 4. Llamar a Decolecta: GET .../sunat/ruc/full?numero=<ruc> con Bearer <token_real>
  * 5. Registrar en IT_Consumo (R2: siempre, incluso si falla)
  * 6. Retornar respuesta enriquecida con contexto de plan
+ *
+ * Identidad del usuario: viene del JWT procesado por JwtFilter.
+ * Autorización de servicio: X-API-Key validado por ApiKeyFilter (mismo usuario).
  */
 @Slf4j
 @Service
@@ -53,39 +56,39 @@ public class SunatService {
         this.timeoutMs = timeoutMs;
     }
 
-    public SunatResponse consultarRuc(int usuarioId, SunatRequest request) {
+    /**
+     * Consulta datos de un contribuyente en SUNAT vía Decolecta.
+     *
+     * @param usuarioId  userId del JWT autenticado (establecido por JwtFilter)
+     * @param rucParam   RUC de 11 dígitos recibido como query param ?numero=
+     */
+    public SunatResponse consultarRuc(int usuarioId, String rucParam) {
+        // Validar RUC localmente antes de gastar un consumo (R2 + §14.4)
+        ValidadorUtil.validarRuc(rucParam);
+
         // Resolver configuración del proveedor: ApiServicesFuncionId + endpoint + token AES
         Map<String, Object> config = sunatRepository.resolverConfiguracion(usuarioId);
         int funcionId = ((Number) config.get("ApiServicesFuncionId")).intValue();
-        String payload = toJson(request);
+        String payload = "{\"numero\":\"" + rucParam + "\"}";
 
-        // Validar límite de plan (Reglas 6 y 9) — retorna contexto para la respuesta
+        // Validar límite de plan antes de llamar al proveedor
         PlanContext plan = verificarLimite(usuarioId, funcionId, payload);
 
-        // Extraer RUC del identificador PE:RUC
-        String ruc = request.ruc();
-        if (ruc == null || ruc.isBlank()) {
-            throw new IllegalArgumentException(
-                    "No se encontró identificador con scheme 'PE:RUC' en 'identifiers'.");
-        }
-
-        // Validar RUC localmente — evita consumos por datos inválidos al proveedor
-        ValidadorUtil.validarRuc(ruc);
-
         // Token en IT_ApiExternaFuncion.Token; NUNCA loguear el valor plano.
-        // descifrarConFallback() maneja tanto tokens cifrados AES-256 (producción)
-        // como tokens almacenados como texto plano (compatibilidad con datos existentes).
+        // descifrarConFallback() maneja tokens cifrados AES-256 y texto plano legacy.
         String endpoint     = (String) config.get("EndpointExterno");
         String autorizacion = (String) config.get("Autorizacion");
-        String tokenReal    = aesUtil.descifrarConFallback((String) config.get("Token")); // NUNCA loguear
+        String tokenReal    = aesUtil.descifrarConFallback((String) config.get("Token"));
 
         // ── Validación del template de Autorización ───────────────────────────
         if (autorizacion == null || !autorizacion.contains("{TOKEN}")) {
-            log.warn("[SUNAT] IT_ApiExternaFuncion.Autorizacion no contiene el placeholder " +
-                     "{{TOKEN}}. Valor actual: '{}'. El header Authorization se enviará sin token " +
-                     "→ Decolecta responderá 401. Corregir en BD: UPDATE IT_ApiExternaFuncion " +
-                     "SET Autorizacion='Bearer {{TOKEN}}' WHERE Codigo='DECOLECTA_SUNAT'",
-                     autorizacion);
+            log.error("[SUNAT] CONFIGURACIÓN INCORRECTA - IT_ApiExternaFuncion.Autorizacion no contiene " +
+                      "el placeholder {{TOKEN}}. Valor actual: '{}'. Corregir en BD: " +
+                      "UPDATE IT_ApiExternaFuncion SET Autorizacion='Bearer {{TOKEN}}' " +
+                      "WHERE Codigo='DECOLECTA_SUNAT'", autorizacion);
+        } else {
+            log.debug("[SUNAT] Autorización configurada correctamente: {}",
+                      autorizacion.replace("{TOKEN}", "[TOKEN_OCULTO]"));
         }
         String authHeader = autorizacion != null ? autorizacion.replace("{TOKEN}", tokenReal) : "";
         String authScheme = authHeader.contains(" ")
@@ -93,15 +96,17 @@ public class SunatService {
                             : authHeader;
 
         // ── Construcción de la URL final ──────────────────────────────────────
-        // Igual que en RENIEC: si el endpoint ya incluye el nombre del parámetro
-        // (ej: ?ruc=), solo concatenar el valor; si no, añadir el parámetro estándar.
+        // El endpoint en BD es: https://api.decolecta.com/v1/sunat/ruc/full?numero=
+        // Ya incluye el nombre del parámetro → concatenar solo el valor del RUC.
+        // Si por algún motivo en BD viene sin query string → añadir ?numero=<ruc>
         final String urlFinal;
         if (endpoint.contains("?")) {
-            urlFinal = endpoint + ruc;
+            urlFinal = endpoint + rucParam;
         } else {
-            urlFinal = endpoint + "?ruc=" + ruc;
+            urlFinal = endpoint + "?numero=" + rucParam;
         }
-        log.info("[SUNAT] → {} | authScheme={} | ruc={}", urlFinal, authScheme, ruc);
+        log.info("[SUNAT] Llamada externa → {} | authScheme={} | ruc={} | authHeaderLength={}",
+                 urlFinal, authScheme, rucParam, authHeader.length());
 
         SunatResponse respuesta;
         boolean exito = false;
@@ -119,7 +124,7 @@ public class SunatService {
                     .timeout(Duration.ofMillis(timeoutMs))
                     .block();
 
-            respuesta = mapearRespuesta(externa, ruc, usuarioId, plan, funcionId);
+            respuesta = mapearRespuesta(externa, rucParam, usuarioId, plan, funcionId);
             exito = true;
             responseJson = toJson(respuesta);
 
@@ -129,18 +134,19 @@ public class SunatService {
         } catch (WebClientResponseException e) {
             String decolectaBody = e.getResponseBodyAsString();
             int httpStatus = e.getStatusCode().value();
-            log.error("[SUNAT] Decolecta respondió {} para RUC {}. " +
-                      "URL llamada: {} | authScheme: {} | Body de Decolecta: {}",
-                      httpStatus, ruc, urlFinal, authScheme, decolectaBody);
+            log.error("[SUNAT] ERROR DECOLECTA {} para RUC {}. " +
+                      "URL: {} | authScheme: {} | authHeaderLength: {} | Body: {}",
+                      httpStatus, rucParam, urlFinal, authScheme,
+                      authHeader.length(), decolectaBody);
             responseJson = "{\"httpStatus\":" + httpStatus +
-                           ",\"decolectaError\":" + (decolectaBody.isBlank() ? "\"\"" : decolectaBody) + "}";
+                           ",\"decolectaError\":" +
+                           (decolectaBody.isBlank() ? "\"\"" : decolectaBody) + "}";
             consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
             throw new ProveedorExternoException("Decolecta-SUNAT", httpStatus, decolectaBody);
 
         } catch (Exception e) {
-            log.error("[SUNAT] Error inesperado consultando RUC {}: {}", ruc, e.getMessage());
+            log.error("[SUNAT] Error inesperado consultando RUC {}: {}", rucParam, e.getMessage());
             responseJson = "{\"error\": \"" + e.getMessage() + "\"}";
-            // R2: registrar consumo fallido
             consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
             throw new ServicioNoDisponibleException("Decolecta-SUNAT");
         }
@@ -158,7 +164,6 @@ public class SunatService {
     private PlanContext verificarLimite(int usuarioId, int funcionId, String payload) {
         Map<String, Object> resultado = consumoRepository.validarLimitePlan(usuarioId, funcionId);
 
-        // Regla 9: NombrePlan vacío = sin plan activo
         String nombrePlan = resultado.containsKey("NombrePlan")
                 ? (String) resultado.get("NombrePlan") : "";
         if (nombrePlan == null || nombrePlan.isBlank()) {
@@ -173,7 +178,6 @@ public class SunatService {
         Integer limiteMaximo = resultado.containsKey("LimiteMaximo") && resultado.get("LimiteMaximo") != null
                 ? ((Number) resultado.get("LimiteMaximo")).intValue() : null;
 
-        // BIT: PuedeContinuar viene como Boolean del driver MS JDBC
         if (!ValidadorUtil.bit(resultado.get("PuedeContinuar"))) {
             int lim = limiteMaximo != null ? limiteMaximo : 0;
             String msg = resultado.containsKey("MensajeError")
@@ -185,10 +189,63 @@ public class SunatService {
         return new PlanContext(nombrePlan, consumoActual, limiteMaximo);
     }
 
-    @SuppressWarnings("rawtypes")
+    @SuppressWarnings({"rawtypes", "unchecked"})
     private SunatResponse mapearRespuesta(Map externa, String ruc,
                                           int usuarioId, PlanContext plan, int funcionId) {
         if (externa == null) throw new ServicioNoDisponibleException("Decolecta-SUNAT");
+
+        // ── LOG del body real de Decolecta ────────────────────────────────────
+        // Permite ver la estructura y los nombres exactos de campo del proveedor.
+        log.info("[SUNAT] Body completo de Decolecta para RUC {}: {}", ruc, externa);
+
+        // ── Resolver nodo de datos ────────────────────────────────────────────
+        // Decolecta puede devolver los campos en la raíz o dentro de "data"/"result".
+        Map<String, Object> datos = externa;
+        for (String nodo : new String[]{"data", "result", "contribuyente"}) {
+            if (externa.containsKey(nodo) && externa.get(nodo) instanceof Map) {
+                datos = (Map<String, Object>) externa.get(nodo);
+                log.debug("[SUNAT] Campos encontrados en nodo '{}': {}", nodo, datos.keySet());
+                break;
+            }
+        }
+
+        // ── Mapeo de campos reales de Decolecta SUNAT_RUC ────────────────────
+        // Nombres confirmados: snake_case del proveedor → camelCase de la respuesta.
+        // str() intenta clave1 (snake_case) y si está vacío intenta clave2 (camelCase fallback).
+        String numeroDocumento   = str(datos, "numero_documento",    ruc);   // fallback al RUC consultado
+        String razonSocial       = str(datos, "razon_social",        "razonSocial");
+        String tipo              = str(datos, "tipo",                "tipo");
+        String estado            = str(datos, "estado",              "estado");
+        String condicion         = str(datos, "condicion",           "condicion");
+        String direccion         = str(datos, "direccion",           "direccion");
+        String ubigeo            = str(datos, "ubigeo",              "ubigeo");
+        String viaTipo           = str(datos, "via_tipo",            "viaTipo");
+        String viaNombre         = str(datos, "via_nombre",          "viaNombre");
+        String zonaCodigo        = str(datos, "zona_codigo",         "zonaCodigo");
+        String zonaTipo          = str(datos, "zona_tipo",           "zonaTipo");
+        String numero            = str(datos, "numero",              "numero");
+        String interior          = str(datos, "interior",            "interior");
+        String lote              = str(datos, "lote",                "lote");
+        String dpto              = str(datos, "dpto",                "dpto");
+        String manzana           = str(datos, "manzana",             "manzana");
+        String kilometro         = str(datos, "kilometro",           "kilometro");
+        String distrito          = str(datos, "distrito",            "distrito");
+        String provincia         = str(datos, "provincia",           "provincia");
+        String departamento      = str(datos, "departamento",        "departamento");
+        // Booleans: Decolecta los devuelve como true/false JSON o como strings "true"/"false"
+        Boolean esAgenteRet      = parseBool(datos, "es_agente_retencion",  "esAgenteRetencion");
+        Boolean esBuenContrib    = parseBool(datos, "es_buen_contribuyente","esBuenContribuyente");
+        String actividadEcon     = str(datos, "actividad_economica", "actividadEconomica");
+        String tipoFacturacion   = str(datos, "tipo_facturacion",    "tipoFacturacion");
+        String tipoContabilidad  = str(datos, "tipo_contabilidad",   "tipoContabilidad");
+        String comercioExterior  = str(datos, "comercio_exterior",   "comercioExterior");
+        String nroTrabajadores   = str(datos, "numero_trabajadores", "numeroTrabajadores");
+        // localesAnexos: puede venir como List (JSON array) o como String serializada → parsear
+        List<Object> localesAnexos = parseList(datos, "locales_anexos", "localesAnexos");
+
+        log.info("[SUNAT] Campos mapeados → ruc='{}' razonSocial='{}' estado='{}' condicion='{}'",
+                 numeroDocumento, razonSocial, estado, condicion);
+
         // consumoActual + 1: este request acaba de registrarse
         return new SunatResponse(
                 true,
@@ -199,14 +256,91 @@ public class SunatService {
                 plan.consumoActual() + 1,
                 plan.limiteMaximo(),
                 funcionId,
+                // Información fija del servicio SUNAT_RUC
+                "Consulta RUC",
+                "SUNAT_RUC",
+                "Consulta de datos por RUC",
                 new SunatResponse.SunatData(
-                        ruc,
-                        (String) externa.getOrDefault("razonSocial", ""),
-                        (String) externa.getOrDefault("estado", ""),
-                        (String) externa.getOrDefault("condicion", ""),
-                        (String) externa.getOrDefault("direccion", "")
+                        numeroDocumento,
+                        razonSocial,
+                        tipo,
+                        estado,
+                        condicion,
+                        direccion,
+                        ubigeo,
+                        viaTipo,
+                        viaNombre,
+                        zonaCodigo,
+                        zonaTipo,
+                        numero,
+                        interior,
+                        lote,
+                        dpto,
+                        manzana,
+                        kilometro,
+                        distrito,
+                        provincia,
+                        departamento,
+                        esAgenteRet,
+                        esBuenContrib,
+                        actividadEcon,
+                        tipoFacturacion,
+                        tipoContabilidad,
+                        comercioExterior,
+                        nroTrabajadores,
+                        localesAnexos
                 )
         );
+    }
+
+    /**
+     * Lee un campo de {@code map} probando primero {@code clave1} (snake_case del proveedor)
+     * y luego {@code clave2} (camelCase o valor de fallback).
+     * Devuelve cadena vacía si ninguna clave existe o el valor es nulo.
+     */
+    private String str(Map<String, Object> map, String clave1, String clave2) {
+        Object v = map.get(clave1);
+        if (v == null) v = map.get(clave2);
+        return v != null ? v.toString().trim() : "";
+    }
+
+    /**
+     * Lee un campo booleano intentando snake_case y luego camelCase.
+     * Acepta tanto Boolean nativo (ya deserializado por WebClient) como String "true"/"false".
+     * Devuelve null si el campo no existe.
+     */
+    private Boolean parseBool(Map<String, Object> map, String clave1, String clave2) {
+        Object v = map.get(clave1);
+        if (v == null) v = map.get(clave2);
+        if (v == null)            return null;
+        if (v instanceof Boolean) return (Boolean) v;
+        String s = v.toString().trim();
+        if (s.equalsIgnoreCase("true"))  return Boolean.TRUE;
+        if (s.equalsIgnoreCase("false")) return Boolean.FALSE;
+        return null; // valor no reconocible → omitir en la respuesta (NON_NULL)
+    }
+
+    /**
+     * Lee un campo que debe ser un arreglo JSON.
+     * Si WebClient ya lo deserializó como List → se usa directamente.
+     * Si llega como String "[...]" → se intenta parsear con ObjectMapper.
+     * Devuelve null si el campo no existe o no es parseable como lista.
+     */
+    @SuppressWarnings("unchecked")
+    private List<Object> parseList(Map<String, Object> map, String clave1, String clave2) {
+        Object v = map.get(clave1);
+        if (v == null) v = map.get(clave2);
+        if (v == null)           return null;
+        if (v instanceof List)   return (List<Object>) v;
+        String s = v.toString().trim();
+        if (s.startsWith("[")) {
+            try {
+                return objectMapper.readValue(s, List.class);
+            } catch (Exception ignored) {
+                log.debug("[SUNAT] No se pudo parsear localesAnexos como lista: {}", s);
+            }
+        }
+        return null; // no es lista parseable → omitir en la respuesta (NON_NULL)
     }
 
     private String toJson(Object obj) {
