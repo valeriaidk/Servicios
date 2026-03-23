@@ -1,2 +1,39 @@
-# Ignore SQL directory
+# ─── SQL (datos sensibles locales) ─────────────────────────────────────────
 sql/
+
+# ─── Maven build output ─────────────────────────────────────────────────────
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ─── Archivos de IDE / IntelliJ IDEA ────────────────────────────────────────
+# misc.xml está excluido en .idea/.gitignore para evitar
+# que nombres de JDK locales se propaguen al repo.
+*.iml
+*.iws
+*.ipr
+
+# ─── VS Code — no se versiona la config personal del usuario ────────────────
+# .vscode/settings.json SÍ se versiona (config del proyecto)
+# .vscode/launch.json  SÍ se versiona (config de debug compartida)
+.vscode/*.code-workspace
+
+# ─── Eclipse ────────────────────────────────────────────────────────────────
+.classpath
+.project
+.settings/
+.factorypath
+
+# ─── Sistema operativo ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Variables de entorno (nunca subir credenciales) ────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Logs ───────────────────────────────────────────────────────────────────
+*.log
+spring.log

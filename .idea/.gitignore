@@ -8,3 +8,5 @@
 /dataSources.local.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+# Configuración local de JDK/SDK — cada desarrollador gestiona la suya
+/misc.xml
