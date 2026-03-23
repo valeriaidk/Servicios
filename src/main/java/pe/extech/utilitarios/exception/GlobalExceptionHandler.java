@@ -1,0 +1,159 @@
+package pe.extech.utilitarios.exception;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    /**
+     * En QAS (true): el body completo del proveedor se incluye en el campo "detalles"
+     * del response, lo que facilita el diagnóstico en Postman.
+     *
+     * En producción (false o ausente): el body del proveedor solo se loguea en el
+     * servidor. El response al cliente no expone información interna del proveedor.
+     *
+     * Configura en application.properties:
+     *   extech.debug.exponer-error-proveedor=true   ← QAS
+     *   extech.debug.exponer-error-proveedor=false  ← producción
+     */
+    @Value("${extech.debug.exponer-error-proveedor:false}")
+    private boolean exponerErrorProveedor;
+
+    @ExceptionHandler(LimiteAlcanzadoException.class)
+    public ResponseEntity<ErrorResponse> handleLimite(LimiteAlcanzadoException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(new ErrorResponse("LIMITE_ALCANZADO", ex.getMessage(), ex.getDetalles()));
+    }
+
+    @ExceptionHandler(ApiKeyInvalidaException.class)
+    public ResponseEntity<ErrorResponse> handleApiKey(ApiKeyInvalidaException ex) {
+        // No loguear detalle: evitar exponer info de seguridad
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ErrorResponse("API_KEY_INVALIDA", "API Key inválida o expirada."));
+    }
+
+    @ExceptionHandler(UsuarioInactivoException.class)
+    public ResponseEntity<ErrorResponse> handleUsuarioInactivo(UsuarioInactivoException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(new ErrorResponse("USUARIO_INACTIVO", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ServicioNoDisponibleException.class)
+    public ResponseEntity<ErrorResponse> handleServicioNoDisponible(ServicioNoDisponibleException ex) {
+        log.error("Proveedor externo no disponible: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse("SERVICIO_NO_DISPONIBLE", ex.getMessage()));
+    }
+
+    /**
+     * Diferencia los errores reales del proveedor externo según su código HTTP.
+     *
+     * 401 / 403  → problema de autenticación / autorización con el proveedor.
+     *              El token almacenado es inválido, expiró o no tiene permisos.
+     *              Retorna 503 porque es un problema de configuración del servidor,
+     *              no del cliente que llamó a nuestra API.
+     *
+     * 400 / 422  → parámetro rechazado por el proveedor (URL, formato, valor).
+     *              Retorna 422 para que el cliente pueda corregir su request.
+     *
+     * 404        → endpoint del proveedor no encontrado (URL mal configurada en BD).
+     *              Retorna 503: es un problema de configuración, no del cliente.
+     *
+     * 5xx        → el proveedor tiene un error interno.
+     *              Retorna 503 SERVICIO_NO_DISPONIBLE.
+     */
+    @ExceptionHandler(ProveedorExternoException.class)
+    public ResponseEntity<ErrorResponse> handleProveedorExterno(ProveedorExternoException ex) {
+        int status = ex.getStatusProveedor();
+
+        Map<String, Object> detalles = new LinkedHashMap<>();
+        detalles.put("proveedor", ex.getProveedor());
+        detalles.put("statusProveedor", status);
+        // bodyProveedor solo se expone en el response si el flag de debug está activo (QAS).
+        // En producción siempre queda en los logs del servidor (ver log.error más abajo).
+        if (exponerErrorProveedor && ex.getBodyProveedor() != null && !ex.getBodyProveedor().isBlank()) {
+            detalles.put("bodyProveedor", ex.getBodyProveedor());
+        }
+
+        if (status == 401 || status == 403) {
+            log.error("[ProveedorExterno] {} respondió {} — token inválido o sin autorización. " +
+                      "Verificar IT_ApiExternaFuncion.Token y columna Autorizacion.",
+                      ex.getProveedor(), status);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(new ErrorResponse(
+                            "ERROR_AUTENTICACION_PROVEEDOR",
+                            "El token de acceso al proveedor " + ex.getProveedor() +
+                            " es inválido o expiró (HTTP " + status + "). " +
+                            "Contacta a soporte para actualizar las credenciales.",
+                            detalles));
+        }
+
+        if (status == 400 || status == 422) {
+            log.error("[ProveedorExterno] {} respondió {} — parámetro rechazado. Body: {}",
+                      ex.getProveedor(), status, ex.getBodyProveedor());
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(new ErrorResponse(
+                            "PARAMETRO_PROVEEDOR_INVALIDO",
+                            "El proveedor " + ex.getProveedor() +
+                            " rechazó la solicitud (HTTP " + status + "). " +
+                            "Verifica los datos enviados.",
+                            detalles));
+        }
+
+        if (status == 404) {
+            log.error("[ProveedorExterno] {} respondió 404 — endpoint no encontrado. " +
+                      "Verificar IT_ApiExternaFuncion.Endpoint.", ex.getProveedor());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(new ErrorResponse(
+                            "ENDPOINT_PROVEEDOR_NO_ENCONTRADO",
+                            "El endpoint del proveedor " + ex.getProveedor() +
+                            " no existe (HTTP 404). Contacta a soporte.",
+                            detalles));
+        }
+
+        // 5xx u otro código inesperado
+        log.error("[ProveedorExterno] {} respondió {} — error interno del proveedor. Body: {}",
+                  ex.getProveedor(), status, ex.getBodyProveedor());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse(
+                        "SERVICIO_NO_DISPONIBLE",
+                        "El proveedor " + ex.getProveedor() +
+                        " no está disponible en este momento (HTTP " + status + "). " +
+                        "Intenta nuevamente en unos minutos.",
+                        detalles));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
+        String mensaje = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getDefaultMessage)
+                .collect(Collectors.joining(", "));
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse("CAMPO_REQUERIDO", mensaje));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse("VALIDACION_FALLIDA", ex.getMessage()));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGeneral(Exception ex) {
+        log.error("Error inesperado: {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponse("ERROR_INTERNO", "Error inesperado del servidor."));
+    }
+}
