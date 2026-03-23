@@ -1,0 +1,51 @@
+{
+  // ─── Java ────────────────────────────────────────────────────────────────
+  // VS Code detecta automáticamente el JDK desde JAVA_HOME o desde las
+  // rutas del sistema. NO se debe poner una ruta absoluta aquí para que
+  // el archivo sea portable entre desarrolladores.
+  //
+  // Si tienes múltiples JDKs instalados puedes agregar (fuera del repo):
+  //   "java.configuration.runtimes": [
+  //     { "name": "JavaSE-21", "path": "/ruta/local/jdk-21", "default": true }
+  //   ]
+  // en tu settings.json de usuario (~/.config/Code/User/settings.json).
+
+  "java.import.maven.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "java.compile.nullAnalysis.mode": "automatic",
+
+  // ─── Exclusiones de importación ──────────────────────────────────────────
+  "java.import.exclusions": [
+    "**/node_modules/**",
+    "**/.metadata/**",
+    "**/archetype-resources/**",
+    "**/.git/**"
+  ],
+
+  // ─── Editor ──────────────────────────────────────────────────────────────
+  "editor.formatOnSave": true,
+  "editor.tabSize": 2,
+  "[java]": {
+    "editor.defaultFormatter": "redhat.java",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+
+  // ─── Maven ───────────────────────────────────────────────────────────────
+  // El wrapper mvnw del proyecto se usa automáticamente.
+  // Asegura que Maven use el Java del entorno, no rutas hardcodeadas.
+  "maven.executable.preferMavenWrapper": true,
+  "maven.terminal.useJavaHome": true,
+
+  // ─── Spring Boot ─────────────────────────────────────────────────────────
+  "spring-boot.ls.java.home": "",
+
+  // ─── Archivos ignorados en el explorador ─────────────────────────────────
+  "files.exclude": {
+    "**/target": true,
+    "**/.classpath": true,
+    "**/.project": true,
+    "**/.settings": true,
+    "**/.factorypath": true
+  }
+}

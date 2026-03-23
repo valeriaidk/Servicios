@@ -1,0 +1,15 @@
+{
+  // Extensiones recomendadas para este proyecto en VS Code.
+  // VS Code mostrará una notificación al abrir el proyecto para instalarlas.
+  "recommendations": [
+    "vscjava.vscode-java-pack",       // Extension Pack for Java (JDT, debugger, Maven, etc.)
+    "vmware.vscode-spring-boot",      // Spring Boot Tools
+    "vscjava.vscode-spring-initializr",
+    "vscjava.vscode-spring-boot-dashboard",
+    "redhat.java",                    // Language Support for Java
+    "vscjava.vscode-maven",           // Maven for Java
+    "vscjava.vscode-java-debug",      // Debugger for Java
+    "vscjava.vscode-java-test",       // Test Runner for Java
+    "GabrielBB.vscode-lombok"         // Lombok Annotations Support
+  ]
+}
