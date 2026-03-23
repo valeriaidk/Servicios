@@ -21,6 +21,10 @@ public record ReniecResponse(
         Integer consumoActual,
         Integer limiteMaximo,
         Integer apiServicesFuncionId,
+        // Información del servicio consumido (RENIEC_DNI)
+        String servicioNombre,
+        String servicioCodigo,
+        String servicioDescripcion,
         ReniecData data
 ) {
     public record ReniecData(

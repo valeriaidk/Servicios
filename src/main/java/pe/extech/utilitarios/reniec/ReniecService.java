@@ -238,18 +238,21 @@ public class ReniecService {
             }
         }
 
-        // ── Mapeo defensivo: snake_case (Decolecta) y camelCase (fallback) ───
-        // Decolecta RENIEC típicamente devuelve snake_case:
-        //   apellido_paterno, apellido_materno, nombres, nombre_completo
-        // Se lee snake_case primero; si está vacío, se intenta camelCase.
-        String nombres        = str(datos, "nombres",         "nombres");
-        String apellidoPat    = str(datos, "apellido_paterno","apellidoPaterno");
-        String apellidoMat    = str(datos, "apellido_materno","apellidoMaterno");
+        // ── Mapeo de campos reales de Decolecta RENIEC_DNI ───────────────────
+        // Nombres de campo confirmados del proveedor:
+        //   first_name        → nombres
+        //   first_last_name   → apellidoPaterno
+        //   second_last_name  → apellidoMaterno
+        //   full_name         → nombreCompleto
+        String nombres        = str(datos, "first_name",       "nombres");
+        String apellidoPat    = str(datos, "first_last_name",  "apellidoPaterno");
+        String apellidoMat    = str(datos, "second_last_name", "apellidoMaterno");
 
-        // nombre_completo puede venir ya armado del proveedor; si no, se construye
-        String nombreCompleto = str(datos, "nombre_completo", "nombreCompleto");
+        // full_name viene ya armado del proveedor; si por algún motivo llega vacío
+        // se construye localmente para garantizar que nunca quede en blanco.
+        String nombreCompleto = str(datos, "full_name", "nombreCompleto");
         if (nombreCompleto.isBlank()) {
-            nombreCompleto = (apellidoPat + " " + apellidoMat + " " + nombres).trim();
+            nombreCompleto = (nombres + " " + apellidoPat + " " + apellidoMat).trim();
         }
 
         log.info("[RENIEC] Campos mapeados → nombres='{}' aPat='{}' aMat='{}' completo='{}'",
@@ -265,6 +268,10 @@ public class ReniecService {
                 plan.consumoActual() + 1,
                 plan.limiteMaximo(),
                 funcionId,
+                // Información fija del servicio RENIEC_DNI
+                "Consulta DNI",
+                "RENIEC_DNI",
+                "Consulta de datos por DNI",
                 new ReniecResponse.ReniecData(dni, nombres, apellidoPat,
                         apellidoMat, nombreCompleto)
         );
