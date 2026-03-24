@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nuevo API Key generado</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f8f8f8; font-family:Arial,Helvetica,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0"
+         style="background-color:#f8f8f8; padding:40px 0;">
+    <tr>
+      <td align="center">
+
+        <table width="600" cellpadding="0" cellspacing="0"
+               style="background:#ffffff; border-radius:12px; overflow:hidden;
+                      box-shadow:0 4px 16px rgba(0,0,0,0.08); max-width:600px;">
+
+          <!-- Encabezado -->
+          <tr>
+            <td align="center" style="background:#f97316; padding:28px 40px;">
+              <p style="margin:0; font-size:13px; color:#fff3e0;
+                        letter-spacing:2px; text-transform:uppercase; font-weight:600;">
+                Plataforma de servicios
+              </p>
+              <h1 style="margin:8px 0 0; font-size:28px; font-weight:800; color:#ffffff;">
+                {{brand_app_name}}
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Cuerpo -->
+          <tr>
+            <td style="padding:40px 48px; color:#333333;">
+
+              <h2 style="margin:0 0 16px; font-size:20px; color:#f97316; font-weight:700;">
+                Se generó un nuevo API Key para tu cuenta
+              </h2>
+
+              <p style="margin:0 0 20px; font-size:15px; line-height:1.7; color:#555555;">
+                Hola <strong>{{nombre}}</strong>, se ha generado un nuevo API Key para tu cuenta
+                el <strong>{{fecha_regeneracion}}</strong>.
+              </p>
+
+              <!-- Aviso de seguridad -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                <tr>
+                  <td style="background:#fff7ed; border-left:4px solid #f97316;
+                              border-radius:4px; padding:14px 18px;">
+                    <p style="margin:0; font-size:13px; color:#92400e; line-height:1.6;">
+                      ⚠️ Tu API Key anterior ha quedado desactivada y ya no es válida.<br/>
+                      Si no solicitaste este cambio, contacta a soporte de inmediato.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:14px; color:#777777;">
+                ¿Necesitas ayuda? Escríbenos a
+                <a href="mailto:{{brand_support_email}}"
+                   style="color:#f97316; text-decoration:none; font-weight:600;">
+                  {{brand_support_email}}
+                </a>.
+              </p>
+
+            </td>
+          </tr>
+
+          <!-- Pie -->
+          <tr>
+            <td align="center"
+                style="background:#fafafa; border-top:1px solid #f0e8e0; padding:20px 48px;">
+              <p style="margin:0; font-size:12px; color:#aaaaaa; line-height:1.7;">
+                Gracias por usar <strong>{{brand_app_name}}</strong>.<br/>
+                Este mensaje fue generado automáticamente. Por favor no respondas a este correo.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

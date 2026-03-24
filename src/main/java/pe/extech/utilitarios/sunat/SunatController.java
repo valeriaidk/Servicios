@@ -22,7 +22,7 @@ import pe.extech.utilitarios.sunat.dto.SunatResponse;
 @RequiredArgsConstructor
 public class SunatController {
 
-    private final SunatService sunatService;
+    private final ISunatService sunatService;
 
     @Operation(
         summary = "Consultar contribuyente por RUC",

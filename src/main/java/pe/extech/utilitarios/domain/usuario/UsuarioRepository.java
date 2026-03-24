@@ -95,4 +95,19 @@ public class UsuarioRepository {
         Object filas = rows.get(0).get("FilasAfectadas");
         return filas != null ? ((Number) filas).intValue() : 0;
     }
+
+    /**
+     * Retorna el nombre del usuario por su ID.
+     * Se usa para enriquecer las respuestas de los servicios con el nombre visible
+     * del usuario, y para persistirlo en IT_Consumo.UsuarioRegistro.
+     *
+     * Retorna null si el usuario no existe, está inactivo o eliminado.
+     */
+    public String obtenerNombrePorId(int usuarioId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT Nombre FROM dbo.IT_Usuario WHERE UsuarioId = ? AND Activo = 1 AND Eliminado = 0",
+                usuarioId);
+        if (rows.isEmpty()) return null;
+        return (String) rows.get(0).get("Nombre");
+    }
 }

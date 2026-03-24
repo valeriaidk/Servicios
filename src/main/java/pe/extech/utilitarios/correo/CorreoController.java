@@ -21,7 +21,7 @@ import pe.extech.utilitarios.correo.dto.CorreoResponse;
 @RequiredArgsConstructor
 public class CorreoController {
 
-    private final CorreoService correoService;
+    private final ICorreoService correoService;
 
     @Operation(
         summary = "Enviar correo electrónico",

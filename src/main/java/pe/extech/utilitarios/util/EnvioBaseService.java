@@ -6,9 +6,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
+import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +26,23 @@ public abstract class EnvioBaseService {
     protected final PlantillaUtil plantillaUtil;
     protected final ObjectMapper objectMapper;
     protected final JdbcTemplate jdbcTemplate;
+    protected final UsuarioRepository usuarioRepository;
+
+    /**
+     * Resuelve el nombre visible del usuario por su ID.
+     * Se usa para:
+     *   - persistir en IT_Consumo.UsuarioRegistro (VARCHAR 200)
+     *   - exponer como "nombreUsuario" en la respuesta JSON
+     * Devuelve null si no se encuentra (NON_NULL en el DTO lo omite del JSON).
+     */
+    protected String resolverNombreUsuario(int usuarioId) {
+        try {
+            return usuarioRepository.obtenerNombrePorId(usuarioId);
+        } catch (Exception e) {
+            log.warn("[BASE] No se pudo resolver nombre para usuarioId={}: {}", usuarioId, e.getMessage());
+            return null;
+        }
+    }
 
     /**
      * Valida si el usuario puede consumir la función.
@@ -36,7 +53,15 @@ public abstract class EnvioBaseService {
      * consumoActual en el PlanContext es el conteo ANTES de este request.
      * Para mostrar en la respuesta, usar consumoActual + 1.
      */
-    protected PlanContext validarPlan(int usuarioId, int funcionId) {
+    /**
+     * Valida si el usuario puede consumir la función.
+     * Si no puede: registra consumo fallido (R2) con el nombre del usuario y lanza excepción.
+     * Si puede: retorna PlanContext con (plan, consumoActual, limiteMaximo).
+     *
+     * @param nombreUsuario se persiste en IT_Consumo.UsuarioRegistro incluso en error,
+     *                      para que la auditoría identifique quién agotó el límite.
+     */
+    protected PlanContext validarPlan(int usuarioId, int funcionId, String nombreUsuario) {
         Map<String, Object> resultado = consumoRepository.validarLimitePlan(usuarioId, funcionId);
 
         // Regla 9: sin plan activo → bloquear aunque PuedeContinuar sea 1
@@ -44,7 +69,7 @@ public abstract class EnvioBaseService {
                 ? (String) resultado.get("NombrePlan") : "";
         if (nombrePlan == null || nombrePlan.isBlank()) {
             consumoRepository.registrar(usuarioId, funcionId, null,
-                    "Usuario sin plan activo.", false, false);
+                    "Usuario sin plan activo.", false, false, nombreUsuario);
             throw new LimiteAlcanzadoException(
                     "No tienes un plan activo. Contáctate con soporte.", 0, 0, "SIN_PLAN");
         }
@@ -60,7 +85,8 @@ public abstract class EnvioBaseService {
             int lim = limiteMaximo != null ? limiteMaximo : 0;
             String mensaje = resultado.containsKey("MensajeError")
                     ? (String) resultado.get("MensajeError") : "Límite de consumo alcanzado.";
-            consumoRepository.registrar(usuarioId, funcionId, null, mensaje, false, false);
+            consumoRepository.registrar(usuarioId, funcionId, null, mensaje,
+                    false, false, nombreUsuario);
             throw new LimiteAlcanzadoException(mensaje, consumoActual, lim, nombrePlan);
         }
 
@@ -68,45 +94,39 @@ public abstract class EnvioBaseService {
     }
 
     /**
-     * Resuelve el contenido del mensaje:
-     * - Si viene templateCodigo: busca en IT_Template y renderiza variables.
-     *   Si version != null, se filtra por esa versión exacta; si es null, se toma la última.
-     * - Si no hay template: usa el valor de variables.get("cuerpo")
+     * Resuelve el contenido del mensaje cargando el template desde el classpath.
+     *
+     * Ruta: templates/{canal_lowercase}/{templateCodigo_lowercase}.html  (EMAIL)
+     *       templates/{canal_lowercase}/{templateCodigo_lowercase}.txt   (SMS)
+     *
+     * Ejemplos:
+     *   - EMAIL + OTP      → templates/correo/otp.html
+     *   - SMS   + OTP      → templates/sms/otp.txt
+     *   - EMAIL + BIENVENIDA → templates/correo/bienvenida.html
+     *
+     * El AsuntoTemplate sigue leyendo desde IT_Template en BD (via resolverAsunto()).
+     * Esto permite cambiar el asunto sin redeploy, mientras el cuerpo está versionado en git.
+     *
+     * Si no viene templateCodigo: usa variables.get("cuerpo") (modo INLINE).
+     * El parámetro version se ignora — la versión se controla con el nombre del archivo.
      */
     protected String resolverContenido(int funcionId, String canal,
                                        String templateCodigo,
                                        Map<String, Object> variables,
                                        Integer version) {
         if (templateCodigo != null && !templateCodigo.isBlank()) {
-            List<Map<String, Object>> templates;
-            if (version != null) {
-                templates = jdbcTemplate.queryForList(
-                        "SELECT CuerpoTemplate FROM dbo.IT_Template " +
-                        "WHERE ApiServicesFuncionId = ? AND Canal = ? AND Codigo = ? " +
-                        "AND Version = ? AND Activo = 1 AND Eliminado = 0",
-                        funcionId, canal, templateCodigo, version);
-            } else {
-                templates = jdbcTemplate.queryForList(
-                        "SELECT CuerpoTemplate FROM dbo.IT_Template " +
-                        "WHERE ApiServicesFuncionId = ? AND Canal = ? AND Codigo = ? " +
-                        "AND Activo = 1 AND Eliminado = 0 " +
-                        "ORDER BY Version DESC",
-                        funcionId, canal, templateCodigo);
-            }
+            // Extensión: EMAIL usa .html, SMS usa .txt
+            String extension = "EMAIL".equalsIgnoreCase(canal) ? ".html" : ".txt";
+            String carpeta   = "EMAIL".equalsIgnoreCase(canal) ? "correo" : "sms";
+            String ruta      = "templates/" + carpeta + "/" + templateCodigo.toLowerCase() + extension;
 
-            if (templates.isEmpty()) {
-                String verMsg = version != null ? " versión " + version : "";
-                throw new IllegalArgumentException(
-                        "Template '" + templateCodigo + "'" + verMsg +
-                        " no encontrado para canal " + canal + ".");
-            }
-            String cuerpo = (String) templates.get(0).get("CuerpoTemplate");
+            String cuerpo = plantillaUtil.cargarDesdeClasspath(ruta);
             return plantillaUtil.renderizar(cuerpo, variables);
         }
         return variables.containsKey("cuerpo") ? (String) variables.get("cuerpo") : null;
     }
 
-    /** Sobrecarga sin versión — toma siempre la última (compatibilidad). */
+    /** Sobrecarga sin versión — compatibilidad con llamadas existentes. */
     protected String resolverContenido(int funcionId, String canal,
                                        String templateCodigo,
                                        Map<String, Object> variables) {
@@ -152,7 +172,20 @@ public abstract class EnvioBaseService {
     }
 
     /**
-     * Registra el consumo en IT_Consumo (R2: siempre, EsConsulta=false para SMS y Correo).
+     * Registra el consumo en IT_Consumo con nombre del usuario
+     * (R2: siempre, EsConsulta=false para SMS y Correo).
+     * El nombre se persiste en IT_Consumo.UsuarioRegistro (VARCHAR 200).
+     */
+    protected void registrarConsumo(int usuarioId, int funcionId,
+                                     String request, String response, boolean exito,
+                                     String nombreUsuario) {
+        consumoRepository.registrar(usuarioId, funcionId, request, response,
+                exito, false, nombreUsuario);
+    }
+
+    /**
+     * Sobrecarga sin nombre — para paths de error donde el nombre no está disponible.
+     * Persiste NULL en IT_Consumo.UsuarioRegistro.
      */
     protected void registrarConsumo(int usuarioId, int funcionId,
                                      String request, String response, boolean exito) {

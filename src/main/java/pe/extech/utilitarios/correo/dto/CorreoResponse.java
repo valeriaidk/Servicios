@@ -20,6 +20,7 @@ public record CorreoResponse(
         String codigo,
         String mensaje,
         Integer usuarioId,
+        String nombreUsuario,
         String plan,
         Integer consumoActual,
         Integer limiteMaximo,

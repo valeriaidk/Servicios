@@ -21,7 +21,7 @@ import pe.extech.utilitarios.sms.dto.SmsResponse;
 @RequiredArgsConstructor
 public class SmsController {
 
-    private final SmsService smsService;
+    private final ISmsService smsService;
 
     @Operation(
         summary = "Enviar SMS",

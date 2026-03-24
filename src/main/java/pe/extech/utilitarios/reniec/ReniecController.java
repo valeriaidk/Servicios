@@ -23,7 +23,7 @@ import pe.extech.utilitarios.reniec.dto.ReniecResponse;
 @RequiredArgsConstructor
 public class ReniecController {
 
-    private final ReniecService reniecService;
+    private final IReniecService reniecService;
 
     @Operation(
         summary = "Consultar persona por DNI",

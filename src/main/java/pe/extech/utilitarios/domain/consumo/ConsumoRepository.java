@@ -31,14 +31,18 @@ public class ConsumoRepository {
     }
 
     /**
-     * Registra 1 consumo en IT_Consumo (R2: siempre se registra, incluso en error).
+     * Registra 1 consumo en IT_Consumo con nombre visible del usuario (R2).
      * SP: uspConsumoRegistrar(@UsuarioId, @ApiServicesFuncionId, @Request, @Response,
-     *                         @Exito, @EsConsulta, @UsuarioRegistro)
+     *                         @Exito, @EsConsulta, @UsuarioRegistro VARCHAR(200))
+     *
+     * @param nombreUsuario nombre de IT_Usuario.Nombre — se persiste en IT_Consumo.UsuarioRegistro
+     *                      (varchar 200). Null aceptado: el SP tiene DEFAULT NULL para ese param.
      * Columna retornada: ConsumoId (SCOPE_IDENTITY).
      */
     public Long registrar(int usuarioId, int apiServicesFuncionId,
                           String request, String response,
-                          boolean exito, boolean esConsulta) {
+                          boolean exito, boolean esConsulta,
+                          String nombreUsuario) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "EXEC dbo.uspConsumoRegistrar ?, ?, ?, ?, ?, ?, ?",
                 usuarioId,
@@ -47,10 +51,21 @@ public class ConsumoRepository {
                 truncar(response, 4000),
                 exito ? 1 : 0,
                 esConsulta ? 1 : 0,
-                usuarioId);  // @UsuarioRegistro = mismo usuario que consume
+                truncar(nombreUsuario, 200)); // @UsuarioRegistro = nombre visible del usuario
         if (rows.isEmpty()) return null;
         Object id = rows.get(0).get("ConsumoId");
         return id != null ? ((Number) id).longValue() : null;
+    }
+
+    /**
+     * Sobrecarga sin nombre — para paths de error donde el nombre no está disponible.
+     * Persiste NULL en IT_Consumo.UsuarioRegistro.
+     */
+    public Long registrar(int usuarioId, int apiServicesFuncionId,
+                          String request, String response,
+                          boolean exito, boolean esConsulta) {
+        return registrar(usuarioId, apiServicesFuncionId,
+                request, response, exito, esConsulta, null);
     }
 
     /**

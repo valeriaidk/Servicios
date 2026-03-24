@@ -19,6 +19,7 @@ public record SmsResponse(
         String codigo,
         String mensaje,
         Integer usuarioId,
+        String nombreUsuario,
         String plan,
         Integer consumoActual,
         Integer limiteMaximo,

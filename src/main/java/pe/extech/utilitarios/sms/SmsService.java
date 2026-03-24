@@ -11,6 +11,7 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
+import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 import pe.extech.utilitarios.exception.ProveedorExternoException;
 import pe.extech.utilitarios.exception.ServicioNoDisponibleException;
@@ -47,7 +48,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class SmsService extends EnvioBaseService {
+public class SmsService extends EnvioBaseService implements ISmsService {
 
     private static final String SERVICIO_NOMBRE      = "Envío de SMS";
     private static final String SERVICIO_CODIGO      = "SMS_SEND";
@@ -63,10 +64,11 @@ public class SmsService extends EnvioBaseService {
                       PlantillaUtil plantillaUtil,
                       ObjectMapper objectMapper,
                       JdbcTemplate jdbcTemplate,
+                      UsuarioRepository usuarioRepository,
                       AesUtil aesUtil,
                       @Value("${extech.proveedor.infobip.timeout-ms:30000}") long timeoutMs,
                       @Value("${extech.proveedor.infobip.sender-id:ExtechSMS}") String defaultSenderId) {
-        super(consumoRepository, plantillaUtil, objectMapper, jdbcTemplate);
+        super(consumoRepository, plantillaUtil, objectMapper, jdbcTemplate, usuarioRepository);
         this.smsRepository   = smsRepository;
         this.aesUtil         = aesUtil;
         this.timeoutMs       = timeoutMs;
@@ -74,13 +76,17 @@ public class SmsService extends EnvioBaseService {
     }
 
     public SmsResponse enviar(int usuarioId, SmsRequest request) {
+        // Resolver nombre del usuario primero — estará disponible en TODOS los paths,
+        // incluyendo errores, para que IT_Consumo.UsuarioRegistro siempre identifique quién fue.
+        String nombreUsuario = resolverNombreUsuario(usuarioId);
+
         // Resolver configuración del proveedor: ApiServicesFuncionId + endpoint + token AES
         Map<String, Object> config = smsRepository.resolverConfiguracion(usuarioId);
         int funcionId = ((Number) config.get("ApiServicesFuncionId")).intValue();
         String payload = toJson(request);
 
         // Validar límite de plan — retorna contexto para la respuesta
-        PlanContext plan = validarPlan(usuarioId, funcionId);
+        PlanContext plan = validarPlan(usuarioId, funcionId, nombreUsuario);
 
         // Validar teléfono localmente — evita consumos por datos inválidos (§14.4)
         ValidadorUtil.validarTelefono(request.to());
@@ -126,6 +132,7 @@ public class SmsService extends EnvioBaseService {
                     "OPERACION_EXITOSA",
                     "SMS enviado correctamente.",
                     usuarioId,
+                    nombreUsuario,
                     plan.plan(),
                     plan.consumoActual() + 1,
                     plan.limiteMaximo(),
@@ -149,18 +156,18 @@ public class SmsService extends EnvioBaseService {
             responseJson = "{\"httpStatus\":" + httpStatus +
                            ",\"infobipError\":" +
                            (infobipBody.isBlank() ? "\"\"" : infobipBody) + "}";
-            registrarConsumo(usuarioId, funcionId, payload, responseJson, false);
+            registrarConsumo(usuarioId, funcionId, payload, responseJson, false, nombreUsuario);
             throw new ProveedorExternoException("Infobip-SMS", httpStatus, infobipBody);
 
         } catch (Exception e) {
             log.error("[SMS] Error inesperado enviando SMS a {}: {}", request.to(), e.getMessage());
             responseJson = "{\"error\": \"" + e.getMessage() + "\"}";
-            registrarConsumo(usuarioId, funcionId, payload, responseJson, false);
+            registrarConsumo(usuarioId, funcionId, payload, responseJson, false, nombreUsuario);
             throw new ServicioNoDisponibleException("Infobip-SMS");
         }
 
-        // R2: 1 request = 1 consumo registrado en IT_Consumo
-        registrarConsumo(usuarioId, funcionId, payload, responseJson, exito);
+        // R2: 1 request = 1 consumo registrado en IT_Consumo (con nombre si fue exitoso)
+        registrarConsumo(usuarioId, funcionId, payload, responseJson, exito, nombreUsuario);
         return respuesta;
     }
 
