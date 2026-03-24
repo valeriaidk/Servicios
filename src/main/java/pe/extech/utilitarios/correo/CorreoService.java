@@ -121,6 +121,18 @@ public class CorreoService extends EnvioBaseService {
             String[] recipients = request.to().toArray(String[]::new);
             String referencia = enviarGraph(accessToken, recipients, asunto, cuerpoHtml);
 
+            // ── Paso 4: Construir data con detalle del envío ──────────────────
+            boolean isTemplate = "TEMPLATE".equalsIgnoreCase(request.mode());
+            CorreoResponse.CorreoData data = new CorreoResponse.CorreoData(
+                    request.mode().toUpperCase(),
+                    isTemplate && request.template() != null ? request.template().code()    : null,
+                    isTemplate && request.template() != null ? request.template().version() : null,
+                    request.to(),
+                    request.to().size(),
+                    "Correo enviado correctamente vía Microsoft Graph",
+                    referencia
+            );
+
             // consumoActual + 1: este request acaba de registrarse (R2)
             respuesta = new CorreoResponse(
                     true,
@@ -131,8 +143,10 @@ public class CorreoService extends EnvioBaseService {
                     plan.consumoActual() + 1,
                     plan.limiteMaximo(),
                     funcionId,
-                    "MICROSOFT_GRAPH",
-                    referencia
+                    "Envío de Correo",
+                    "CORREO_ENVIO",
+                    "Envío de correos electrónicos",
+                    data
             );
             exito = true;
             responseJson = toJson(respuesta);
