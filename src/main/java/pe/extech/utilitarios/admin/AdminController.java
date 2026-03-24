@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 
 @Tag(name = "Admin", description = "Gestión de usuarios y planes. Solo administradores.")
-@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/api/v1/admin")
 @RequiredArgsConstructor

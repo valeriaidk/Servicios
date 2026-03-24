@@ -15,7 +15,6 @@ import pe.extech.utilitarios.security.JwtUtil;
 import java.util.Map;
 
 @Tag(name = "Usuario", description = "Perfil, API Key y plan del usuario autenticado")
-@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/api/v1/usuario")
 @RequiredArgsConstructor

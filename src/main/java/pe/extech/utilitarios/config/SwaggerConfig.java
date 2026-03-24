@@ -22,19 +22,13 @@ public class SwaggerConfig {
 
                                 **Autenticación:**
                                 - `/auth/**` — Público (login, registro)
-                                - `/usuario/**` y `/admin/**` — Requieren JWT (`Authorization: Bearer {token}`)
-                                - `/servicios/**` — Requieren API Key (`X-API-Key: {apikey}`) — **JWT no válido aquí**
+                                - `/usuario/**` y `/admin/**` — Requieren `Authorization: Bearer {jwt}` en el header
+                                - `/servicios/**` — Requieren `X-API-Key: {apikey}` en el header
                                 """)
                         .contact(new Contact()
                                 .name("Extech")
                                 .email("soporte@extech.pe")))
                 .components(new Components()
-                        .addSecuritySchemes("bearerAuth",
-                                new SecurityScheme()
-                                        .type(SecurityScheme.Type.HTTP)
-                                        .scheme("bearer")
-                                        .bearerFormat("JWT")
-                                        .description("JWT para /usuario/** y /admin/**"))
                         .addSecuritySchemes("apiKeyAuth",
                                 new SecurityScheme()
                                         .type(SecurityScheme.Type.APIKEY)

@@ -13,8 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import pe.extech.utilitarios.sms.dto.SmsRequest;
 import pe.extech.utilitarios.sms.dto.SmsResponse;
 
-@Tag(name = "Servicios - SMS", description = "Envío de mensajes de texto vía Infobip. Requiere JWT + API Key.")
-@SecurityRequirement(name = "bearerAuth")
+@Tag(name = "Servicios - SMS", description = "Envío de mensajes de texto vía Infobip. Requiere API Key.")
 @SecurityRequirement(name = "apiKeyAuth")
 @RestController
 @RequestMapping("/api/v1/servicios/sms")
