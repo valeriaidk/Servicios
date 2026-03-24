@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
 import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
+import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 import pe.extech.utilitarios.exception.ProveedorExternoException;
 import pe.extech.utilitarios.exception.ServicioNoDisponibleException;
@@ -36,24 +37,31 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class SunatService {
+public class SunatService implements ISunatService {
+
+    private static final String SERVICIO_NOMBRE      = "Consulta RUC";
+    private static final String SERVICIO_CODIGO      = "SUNAT_RUC";
+    private static final String SERVICIO_DESCRIPCION = "Consulta de datos por RUC";
 
     private final SunatRepository sunatRepository;
     private final ConsumoRepository consumoRepository;
+    private final UsuarioRepository usuarioRepository;
     private final AesUtil aesUtil;
     private final ObjectMapper objectMapper;
     private final long timeoutMs;
 
     public SunatService(SunatRepository sunatRepository,
                         ConsumoRepository consumoRepository,
+                        UsuarioRepository usuarioRepository,
                         AesUtil aesUtil,
                         ObjectMapper objectMapper,
                         @Value("${extech.proveedor.decolecta.timeout-ms:60000}") long timeoutMs) {
-        this.sunatRepository = sunatRepository;
+        this.sunatRepository   = sunatRepository;
         this.consumoRepository = consumoRepository;
-        this.aesUtil = aesUtil;
-        this.objectMapper = objectMapper;
-        this.timeoutMs = timeoutMs;
+        this.usuarioRepository = usuarioRepository;
+        this.aesUtil           = aesUtil;
+        this.objectMapper      = objectMapper;
+        this.timeoutMs         = timeoutMs;
     }
 
     /**
@@ -63,6 +71,10 @@ public class SunatService {
      * @param rucParam   RUC de 11 dígitos recibido como query param ?numero=
      */
     public SunatResponse consultarRuc(int usuarioId, String rucParam) {
+        // Resolver nombre del usuario primero — estará disponible en TODOS los paths,
+        // incluyendo errores, para que IT_Consumo.UsuarioRegistro siempre identifique quién fue.
+        String nombreUsuario = usuarioRepository.obtenerNombrePorId(usuarioId);
+
         // Validar RUC localmente antes de gastar un consumo (R2 + §14.4)
         ValidadorUtil.validarRuc(rucParam);
 
@@ -72,7 +84,7 @@ public class SunatService {
         String payload = "{\"numero\":\"" + rucParam + "\"}";
 
         // Validar límite de plan antes de llamar al proveedor
-        PlanContext plan = verificarLimite(usuarioId, funcionId, payload);
+        PlanContext plan = verificarLimite(usuarioId, funcionId, payload, nombreUsuario);
 
         // Token en IT_ApiExternaFuncion.Token; NUNCA loguear el valor plano.
         // descifrarConFallback() maneja tokens cifrados AES-256 y texto plano legacy.
@@ -124,7 +136,8 @@ public class SunatService {
                     .timeout(Duration.ofMillis(timeoutMs))
                     .block();
 
-            respuesta = mapearRespuesta(externa, rucParam, usuarioId, plan, funcionId);
+            // nombreUsuario ya fue resuelto al inicio del método — disponible aquí
+            respuesta = mapearRespuesta(externa, rucParam, usuarioId, nombreUsuario, plan, funcionId);
             exito = true;
             responseJson = toJson(respuesta);
 
@@ -141,18 +154,18 @@ public class SunatService {
             responseJson = "{\"httpStatus\":" + httpStatus +
                            ",\"decolectaError\":" +
                            (decolectaBody.isBlank() ? "\"\"" : decolectaBody) + "}";
-            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true, nombreUsuario);
             throw new ProveedorExternoException("Decolecta-SUNAT", httpStatus, decolectaBody);
 
         } catch (Exception e) {
             log.error("[SUNAT] Error inesperado consultando RUC {}: {}", rucParam, e.getMessage());
             responseJson = "{\"error\": \"" + e.getMessage() + "\"}";
-            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true, nombreUsuario);
             throw new ServicioNoDisponibleException("Decolecta-SUNAT");
         }
 
-        // R2: 1 request = 1 consumo registrado en IT_Consumo
-        consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, exito, true);
+        // R2: 1 request = 1 consumo registrado en IT_Consumo (con nombre si fue exitoso)
+        consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, exito, true, nombreUsuario);
         return respuesta;
     }
 
@@ -161,14 +174,15 @@ public class SunatService {
      * Regla 6: si falla, igual registra el consumo con Exito=0.
      * Regla 9: sin plan activo → bloquear.
      */
-    private PlanContext verificarLimite(int usuarioId, int funcionId, String payload) {
+    private PlanContext verificarLimite(int usuarioId, int funcionId,
+                                        String payload, String nombreUsuario) {
         Map<String, Object> resultado = consumoRepository.validarLimitePlan(usuarioId, funcionId);
 
         String nombrePlan = resultado.containsKey("NombrePlan")
                 ? (String) resultado.get("NombrePlan") : "";
         if (nombrePlan == null || nombrePlan.isBlank()) {
             consumoRepository.registrar(usuarioId, funcionId, payload,
-                    "Usuario sin plan activo.", false, true);
+                    "Usuario sin plan activo.", false, true, nombreUsuario);
             throw new LimiteAlcanzadoException(
                     "No tienes un plan activo. Contáctate con soporte.", 0, 0, "SIN_PLAN");
         }
@@ -182,7 +196,8 @@ public class SunatService {
             int lim = limiteMaximo != null ? limiteMaximo : 0;
             String msg = resultado.containsKey("MensajeError")
                     ? (String) resultado.get("MensajeError") : "Límite alcanzado.";
-            consumoRepository.registrar(usuarioId, funcionId, payload, msg, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, msg,
+                    false, true, nombreUsuario);
             throw new LimiteAlcanzadoException(msg, consumoActual, lim, nombrePlan);
         }
 
@@ -191,7 +206,8 @@ public class SunatService {
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private SunatResponse mapearRespuesta(Map externa, String ruc,
-                                          int usuarioId, PlanContext plan, int funcionId) {
+                                          int usuarioId, String nombreUsuario,
+                                          PlanContext plan, int funcionId) {
         if (externa == null) throw new ServicioNoDisponibleException("Decolecta-SUNAT");
 
         // ── LOG del body real de Decolecta ────────────────────────────────────
@@ -252,14 +268,14 @@ public class SunatService {
                 "OPERACION_EXITOSA",
                 "Consulta realizada correctamente.",
                 usuarioId,
+                nombreUsuario,
                 plan.plan(),
                 plan.consumoActual() + 1,
                 plan.limiteMaximo(),
                 funcionId,
-                // Información fija del servicio SUNAT_RUC
-                "Consulta RUC",
-                "SUNAT_RUC",
-                "Consulta de datos por RUC",
+                SERVICIO_NOMBRE,
+                SERVICIO_CODIGO,
+                SERVICIO_DESCRIPCION,
                 new SunatResponse.SunatData(
                         numeroDocumento,
                         razonSocial,

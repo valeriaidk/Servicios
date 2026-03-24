@@ -20,19 +20,18 @@ import pe.extech.utilitarios.sms.dto.SmsResponse;
 @RequiredArgsConstructor
 public class SmsController {
 
-    private final SmsService smsService;
+    private final ISmsService smsService;
 
     @Operation(
         summary = "Enviar SMS",
         description = """
-            Requiere **X-API-Key** en el header `X-API-Key`. JWT no es válido aquí.
-            Descuenta 1 consumo del plan activo.
+            Requiere **Authorization: Bearer {jwt}** y **X-API-Key: {api_key}** en los headers.
+            Descuenta 1 consumo del plan activo y registra en IT_Consumo (R2).
 
-            **Modo Template**: Indicar `template` (código de IT_Template) y `variables` (mapa clave→valor).
-            **Modo Inline**: Indicar `mensaje` directamente.
+            **Modo INLINE**: `{ "mode": "INLINE", "to": "+51999999999", "message": "Texto" }`
+            **Modo TEMPLATE**: `{ "mode": "TEMPLATE", "to": "+51...", "template": { "channel": "SMS", "code": "OTP" }, "variables": {...} }`
 
-            Si el mismo request idéntico se repite en < 30 s, se retorna la respuesta
-            cacheada sin consumo adicional (deduplicación por R9).
+            La respuesta incluye datos reales de Infobip: messageId, statusName, statusDescription.
             """
     )
     @ApiResponses({

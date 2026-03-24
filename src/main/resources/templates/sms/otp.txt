@@ -1,0 +1,1 @@
+{{brand_app_name}}: Tu código de verificación es {{code}}. Válido por {{minutes}} minutos. Si no lo solicitaste, ignora este mensaje.

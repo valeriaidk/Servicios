@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Código de verificación</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f8f8f8; font-family:Arial,Helvetica,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0"
+         style="background-color:#f8f8f8; padding:40px 0;">
+    <tr>
+      <td align="center">
+
+        <!-- Tarjeta principal -->
+        <table width="600" cellpadding="0" cellspacing="0"
+               style="background:#ffffff; border-radius:12px; overflow:hidden;
+                      box-shadow:0 4px 16px rgba(0,0,0,0.08); max-width:600px;">
+
+          <!-- Encabezado naranja -->
+          <tr>
+            <td align="center"
+                style="background:#f97316; padding:28px 40px;">
+              <p style="margin:0; font-size:13px; color:#fff3e0;
+                        letter-spacing:2px; text-transform:uppercase;
+                        font-weight:600;">Plataforma de servicios</p>
+              <h1 style="margin:8px 0 0; font-size:28px; font-weight:800;
+                          color:#ffffff; letter-spacing:0.5px;">
+                {{brand_app_name}}
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Cuerpo -->
+          <tr>
+            <td style="padding:40px 48px; color:#333333;">
+
+              <h2 style="margin:0 0 12px; font-size:20px; color:#f97316;
+                          font-weight:700;">
+                Hola, bienvenido/a a Extech
+              </h2>
+
+              <p style="margin:0 0 24px; font-size:15px; line-height:1.7;
+                         color:#555555;">
+                Hemos recibido una solicitud de acceso a tu cuenta.<br/>
+                Usa el siguiente código para verificar tu identidad:
+              </p>
+
+              <!-- Bloque del código OTP -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding:8px 0 32px;">
+                    <table cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td align="center"
+                            style="background:#fff7ed; border:2px dashed #fb923c;
+                                   border-radius:12px; padding:20px 40px;">
+                          <span style="display:block; font-size:42px;
+                                       font-weight:800; color:#ea580c;
+                                       letter-spacing:12px;
+                                       font-family:'Courier New',Courier,monospace;">
+                            {{code}}
+                          </span>
+                          <span style="display:block; margin-top:10px;
+                                       font-size:13px; color:#9a3412;
+                                       font-weight:500;">
+                            Válido por <strong>{{minutes}} minutos</strong>
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Aviso de seguridad -->
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="margin-bottom:24px;">
+                <tr>
+                  <td style="background:#fff7ed; border-left:4px solid #f97316;
+                              border-radius:4px; padding:12px 16px;">
+                    <p style="margin:0; font-size:13px; color:#92400e;
+                               line-height:1.6;">
+                      ⚠️ Si no solicitaste este código, ignora este correo.<br/>
+                      Nadie de nuestro equipo te pedirá este código por teléfono ni por chat.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:14px; color:#777777;">
+                ¿Tienes alguna duda? Contáctanos en
+                <a href="mailto:{{brand_support_email}}"
+                   style="color:#f97316; text-decoration:none;
+                           font-weight:600;">{{brand_support_email}}</a>.
+              </p>
+
+            </td>
+          </tr>
+
+          <!-- Pie de página -->
+          <tr>
+            <td align="center"
+                style="background:#fafafa; border-top:1px solid #f0e8e0;
+                       padding:20px 48px;">
+              <p style="margin:0; font-size:12px; color:#aaaaaa;
+                         line-height:1.7;">
+                Gracias por usar <strong>{{brand_app_name}}</strong>.<br/>
+                Este mensaje fue generado automáticamente. Por favor no respondas a este correo.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- /Tarjeta principal -->
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

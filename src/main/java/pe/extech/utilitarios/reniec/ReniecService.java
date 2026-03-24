@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
 import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
+import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 import pe.extech.utilitarios.exception.ProveedorExternoException;
 import pe.extech.utilitarios.exception.ServicioNoDisponibleException;
@@ -35,24 +36,31 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class ReniecService {
+public class ReniecService implements IReniecService {
+
+    private static final String SERVICIO_NOMBRE      = "Consulta DNI";
+    private static final String SERVICIO_CODIGO      = "RENIEC_DNI";
+    private static final String SERVICIO_DESCRIPCION = "Consulta de datos por DNI";
 
     private final ReniecRepository reniecRepository;
     private final ConsumoRepository consumoRepository;
+    private final UsuarioRepository usuarioRepository;
     private final AesUtil aesUtil;
     private final ObjectMapper objectMapper;
     private final long timeoutMs;
 
     public ReniecService(ReniecRepository reniecRepository,
                          ConsumoRepository consumoRepository,
+                         UsuarioRepository usuarioRepository,
                          AesUtil aesUtil,
                          ObjectMapper objectMapper,
                          @Value("${extech.proveedor.decolecta.timeout-ms:60000}") long timeoutMs) {
-        this.reniecRepository = reniecRepository;
+        this.reniecRepository  = reniecRepository;
         this.consumoRepository = consumoRepository;
-        this.aesUtil = aesUtil;
-        this.objectMapper = objectMapper;
-        this.timeoutMs = timeoutMs;
+        this.usuarioRepository = usuarioRepository;
+        this.aesUtil           = aesUtil;
+        this.objectMapper      = objectMapper;
+        this.timeoutMs         = timeoutMs;
     }
 
     /**
@@ -62,6 +70,10 @@ public class ReniecService {
      * @param dniParam   DNI de 8 dígitos recibido como query param ?numero=
      */
     public ReniecResponse consultarDni(int usuarioId, String dniParam) {
+        // Resolver nombre del usuario primero — estará disponible en TODOS los paths,
+        // incluyendo errores, para que IT_Consumo.UsuarioRegistro siempre identifique quién fue.
+        String nombreUsuario = usuarioRepository.obtenerNombrePorId(usuarioId);
+
         // Validar DNI localmente antes de gastar un consumo (R2 + §14.4)
         // ValidadorUtil lanza IllegalArgumentException si el formato es incorrecto.
         ValidadorUtil.validarDni(dniParam);
@@ -72,7 +84,7 @@ public class ReniecService {
         String payload = "{\"numero\":\"" + dniParam + "\"}";
 
         // Validar límite de plan antes de llamar al proveedor
-        PlanContext plan = verificarLimite(usuarioId, funcionId, payload);
+        PlanContext plan = verificarLimite(usuarioId, funcionId, payload, nombreUsuario);
 
         String dni = dniParam;
 
@@ -134,7 +146,8 @@ public class ReniecService {
                     .timeout(Duration.ofMillis(timeoutMs))
                     .block();
 
-            respuesta = mapearRespuesta(externa, dni, usuarioId, plan, funcionId);
+            // nombreUsuario ya fue resuelto al inicio del método — disponible aquí
+            respuesta = mapearRespuesta(externa, dni, usuarioId, nombreUsuario, plan, funcionId);
             exito = true;
             responseJson = toJson(respuesta);
 
@@ -165,19 +178,19 @@ public class ReniecService {
             responseJson = "{\"httpStatus\":" + httpStatus +
                            ",\"decolectaError\":" + (decolectaBody.isBlank() ? "\"\"" : decolectaBody) +
                            ",\"analisis\":\"" + analisisError + "\"}";
-            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true, nombreUsuario);
             throw new ProveedorExternoException("Decolecta-RENIEC", httpStatus, decolectaBody);
 
         } catch (Exception e) {
             log.error("[RENIEC] Error inesperado consultando DNI {}: {}", dni, e.getMessage());
             responseJson = "{\"error\": \"" + e.getMessage() + "\"}";
             // R2: registrar consumo fallido
-            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, false, true, nombreUsuario);
             throw new ServicioNoDisponibleException("Decolecta-RENIEC");
         }
 
-        // R2: 1 request = 1 consumo registrado en IT_Consumo
-        consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, exito, true);
+        // R2: 1 request = 1 consumo registrado en IT_Consumo (con nombre si fue exitoso)
+        consumoRepository.registrar(usuarioId, funcionId, payload, responseJson, exito, true, nombreUsuario);
         return respuesta;
     }
 
@@ -186,7 +199,8 @@ public class ReniecService {
      * Regla 6: si falla, igual registra el consumo con Exito=0.
      * Regla 9: sin plan activo → bloquear.
      */
-    private PlanContext verificarLimite(int usuarioId, int funcionId, String payload) {
+    private PlanContext verificarLimite(int usuarioId, int funcionId,
+                                        String payload, String nombreUsuario) {
         Map<String, Object> resultado = consumoRepository.validarLimitePlan(usuarioId, funcionId);
 
         // Regla 9: NombrePlan vacío = sin plan activo
@@ -194,7 +208,7 @@ public class ReniecService {
                 ? (String) resultado.get("NombrePlan") : "";
         if (nombrePlan == null || nombrePlan.isBlank()) {
             consumoRepository.registrar(usuarioId, funcionId, payload,
-                    "Usuario sin plan activo.", false, true);
+                    "Usuario sin plan activo.", false, true, nombreUsuario);
             throw new LimiteAlcanzadoException(
                     "No tienes un plan activo. Contáctate con soporte.", 0, 0, "SIN_PLAN");
         }
@@ -209,7 +223,8 @@ public class ReniecService {
             int lim = limiteMaximo != null ? limiteMaximo : 0;
             String msg = resultado.containsKey("MensajeError")
                     ? (String) resultado.get("MensajeError") : "Límite alcanzado.";
-            consumoRepository.registrar(usuarioId, funcionId, payload, msg, false, true);
+            consumoRepository.registrar(usuarioId, funcionId, payload, msg,
+                    false, true, nombreUsuario);
             throw new LimiteAlcanzadoException(msg, consumoActual, lim, nombrePlan);
         }
 
@@ -218,7 +233,8 @@ public class ReniecService {
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ReniecResponse mapearRespuesta(Map externa, String dni,
-                                           int usuarioId, PlanContext plan, int funcionId) {
+                                           int usuarioId, String nombreUsuario,
+                                           PlanContext plan, int funcionId) {
         if (externa == null) throw new ServicioNoDisponibleException("Decolecta-RENIEC");
 
         // ── LOG del body real de Decolecta ────────────────────────────────────
@@ -264,14 +280,14 @@ public class ReniecService {
                 "OPERACION_EXITOSA",
                 "Consulta realizada correctamente.",
                 usuarioId,
+                nombreUsuario,
                 plan.plan(),
                 plan.consumoActual() + 1,
                 plan.limiteMaximo(),
                 funcionId,
-                // Información fija del servicio RENIEC_DNI
-                "Consulta DNI",
-                "RENIEC_DNI",
-                "Consulta de datos por DNI",
+                SERVICIO_NOMBRE,
+                SERVICIO_CODIGO,
+                SERVICIO_DESCRIPCION,
                 new ReniecResponse.ReniecData(dni, nombres, apellidoPat,
                         apellidoMat, nombreCompleto)
         );

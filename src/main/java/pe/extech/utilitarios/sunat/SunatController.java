@@ -4,7 +4,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -12,17 +11,14 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import pe.extech.utilitarios.sunat.dto.SunatResponse;
 
-@Tag(name = "Servicios - SUNAT", description = "Consulta de contribuyentes por RUC. Requiere JWT + API Key.")
-@SecurityRequirements({
-    @SecurityRequirement(name = "bearerAuth"),
-    @SecurityRequirement(name = "apiKeyAuth")
-})
+@Tag(name = "Servicios - SUNAT", description = "Consulta de contribuyentes por RUC. Requiere API Key.")
+@SecurityRequirement(name = "apiKeyAuth")
 @RestController
 @RequestMapping("/api/v1/servicios/sunat")
 @RequiredArgsConstructor
 public class SunatController {
 
-    private final SunatService sunatService;
+    private final ISunatService sunatService;
 
     @Operation(
         summary = "Consultar contribuyente por RUC",

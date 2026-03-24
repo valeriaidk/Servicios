@@ -1,0 +1,16 @@
+Hola, bienvenido/a a {{brand_app_name}}.
+
+Tu código de verificación es:
+
+  {{code}}
+
+Este código es válido por {{minutes}} minutos.
+
+Si no solicitaste este acceso, puedes ignorar este mensaje.
+Nadie de nuestro equipo te pedirá este código por teléfono ni por chat.
+
+¿Tienes alguna duda? Escríbenos a {{brand_support_email}}.
+
+---
+Gracias por usar {{brand_app_name}}.
+Este mensaje fue generado automáticamente. Por favor no respondas a este correo.

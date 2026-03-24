@@ -12,6 +12,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import pe.extech.utilitarios.correo.dto.CorreoRequest;
 import pe.extech.utilitarios.correo.dto.CorreoResponse;
 import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
+import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
 import pe.extech.utilitarios.exception.ServicioNoDisponibleException;
 import pe.extech.utilitarios.util.AesUtil;
@@ -55,7 +56,11 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-public class CorreoService extends EnvioBaseService {
+public class CorreoService extends EnvioBaseService implements ICorreoService {
+
+    private static final String SERVICIO_NOMBRE      = "Envío de Correo";
+    private static final String SERVICIO_CODIGO      = "CORREO_ENVIO";
+    private static final String SERVICIO_DESCRIPCION = "Envío de correos electrónicos";
 
     private static final String GRAPH_TOKEN_TEMPLATE =
             "https://login.microsoftonline.com/%s/oauth2/v2.0/token";
@@ -74,12 +79,13 @@ public class CorreoService extends EnvioBaseService {
                          PlantillaUtil plantillaUtil,
                          ObjectMapper objectMapper,
                          JdbcTemplate jdbcTemplate,
+                         UsuarioRepository usuarioRepository,
                          AesUtil aesUtil,
                          @Value("${extech.correo.microsoft.client-id}") String clientId,
                          @Value("${extech.correo.microsoft.tenant-id}") String tenantId,
                          @Value("${extech.correo.microsoft.outlook-user}") String outlookUser,
                          @Value("${extech.proveedor.correo.timeout-ms:30000}") long timeoutMs) {
-        super(consumoRepository, plantillaUtil, objectMapper, jdbcTemplate);
+        super(consumoRepository, plantillaUtil, objectMapper, jdbcTemplate, usuarioRepository);
         this.correoRepository = correoRepository;
         this.aesUtil = aesUtil;
         this.clientId = clientId;
@@ -89,11 +95,15 @@ public class CorreoService extends EnvioBaseService {
     }
 
     public CorreoResponse enviar(int usuarioId, CorreoRequest request) {
+        // Resolver nombre del usuario primero — estará disponible en TODOS los paths,
+        // incluyendo errores, para que IT_Consumo.UsuarioRegistro siempre identifique quién fue.
+        String nombreUsuario = resolverNombreUsuario(usuarioId);
+
         int funcionId = correoRepository.obtenerFuncionId();
         String payload = toJson(request);
 
         // Validar límite de plan — retorna contexto para la respuesta
-        PlanContext plan = validarPlan(usuarioId, funcionId);
+        PlanContext plan = validarPlan(usuarioId, funcionId, nombreUsuario);
 
         // Validar correo del primer destinatario localmente (§14.4)
         ValidadorUtil.validarCorreo(request.primaryTo());
@@ -121,18 +131,35 @@ public class CorreoService extends EnvioBaseService {
             String[] recipients = request.to().toArray(String[]::new);
             String referencia = enviarGraph(accessToken, recipients, asunto, cuerpoHtml);
 
+            // ── Paso 4: Construir data con detalle del envío ──────────────────
+            boolean isTemplate = "TEMPLATE".equalsIgnoreCase(request.mode());
+            CorreoResponse.CorreoData data = new CorreoResponse.CorreoData(
+                    request.mode().toUpperCase(),
+                    isTemplate && request.template() != null ? request.template().code()    : null,
+                    isTemplate && request.template() != null ? request.template().version() : null,
+                    request.to(),
+                    request.to().size(),
+                    "Correo enviado correctamente vía Microsoft Graph",
+                    referencia
+            );
+
+            // nombreUsuario ya fue resuelto al inicio del método — disponible aquí
+
             // consumoActual + 1: este request acaba de registrarse (R2)
             respuesta = new CorreoResponse(
                     true,
                     "OPERACION_EXITOSA",
                     "Correo enviado correctamente.",
                     usuarioId,
+                    nombreUsuario,
                     plan.plan(),
                     plan.consumoActual() + 1,
                     plan.limiteMaximo(),
                     funcionId,
-                    "MICROSOFT_GRAPH",
-                    referencia
+                    SERVICIO_NOMBRE,
+                    SERVICIO_CODIGO,
+                    SERVICIO_DESCRIPCION,
+                    data
             );
             exito = true;
             responseJson = toJson(respuesta);
@@ -142,12 +169,12 @@ public class CorreoService extends EnvioBaseService {
         } catch (Exception e) {
             log.error("[CORREO] Error enviando correo a {}: {}", request.to(), e.getMessage());
             responseJson = "{\"error\": \"" + e.getMessage() + "\"}";
-            registrarConsumo(usuarioId, funcionId, payload, responseJson, false);
+            registrarConsumo(usuarioId, funcionId, payload, responseJson, false, nombreUsuario);
             throw new ServicioNoDisponibleException("Microsoft-Graph-Correo");
         }
 
-        // R2: 1 request = 1 consumo registrado en IT_Consumo
-        registrarConsumo(usuarioId, funcionId, payload, responseJson, exito);
+        // R2: 1 request = 1 consumo registrado en IT_Consumo (con nombre si fue exitoso)
+        registrarConsumo(usuarioId, funcionId, payload, responseJson, exito, nombreUsuario);
         return respuesta;
     }
 

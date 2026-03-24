@@ -5,7 +5,6 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,17 +12,14 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import pe.extech.utilitarios.reniec.dto.ReniecResponse;
 
-@Tag(name = "Servicios - RENIEC", description = "Consulta de personas por DNI. Requiere JWT + API Key.")
-@SecurityRequirements({
-    @SecurityRequirement(name = "bearerAuth"),
-    @SecurityRequirement(name = "apiKeyAuth")
-})
+@Tag(name = "Servicios - RENIEC", description = "Consulta de personas por DNI. Requiere API Key.")
+@SecurityRequirement(name = "apiKeyAuth")
 @RestController
 @RequestMapping("/api/v1/servicios/reniec")
 @RequiredArgsConstructor
 public class ReniecController {
 
-    private final ReniecService reniecService;
+    private final IReniecService reniecService;
 
     @Operation(
         summary = "Consultar persona por DNI",

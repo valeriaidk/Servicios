@@ -4,10 +4,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,8 +37,33 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(LimiteAlcanzadoException.class)
     public ResponseEntity<ErrorResponse> handleLimite(LimiteAlcanzadoException ex) {
+        // Agregar opciones de upgrade basadas en el plan actual del usuario.
+        // El mensaje base viene del SP uspPlanValidarLimiteUsuario (MensajeError).
+        // Aquí se complementa con las alternativas disponibles para que el cliente
+        // sepa exactamente a qué plan puede pasar sin tener que preguntar a soporte.
+        String planActual = ex.getDetalles().containsKey("plan")
+                ? String.valueOf(ex.getDetalles().get("plan")) : "";
+        String mensajeFinal = ex.getMessage() + opcionesUpgradePlan(planActual);
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(new ErrorResponse("LIMITE_ALCANZADO", ex.getMessage(), ex.getDetalles()));
+                .body(new ErrorResponse("LIMITE_ALCANZADO", mensajeFinal, ex.getDetalles()));
+    }
+
+    /**
+     * Devuelve la frase de upgrade que se añade al mensaje de límite alcanzado.
+     * Solo informa — nunca ejecuta un cambio de plan automático.
+     *
+     * FREE     → puede ir a BASIC, PRO o ENTERPRISE
+     * BASIC    → puede ir a PRO o ENTERPRISE
+     * PRO      → solo ENTERPRISE queda disponible
+     * ENTERPRISE / SIN_PLAN / vacío → no aplica upgrade
+     */
+    private String opcionesUpgradePlan(String plan) {
+        return switch (plan.toUpperCase()) {
+            case "FREE"  -> " Para continuar puedes cambiar a: BASIC (100/mes), PRO (1.000/mes) o ENTERPRISE (sin límite).";
+            case "BASIC" -> " Para continuar puedes cambiar a: PRO (1.000/mes) o ENTERPRISE (sin límite).";
+            case "PRO"   -> " Para continuar puedes cambiar a ENTERPRISE (sin límite).";
+            default      -> "";
+        };
     }
 
     @ExceptionHandler(ApiKeyInvalidaException.class)
@@ -146,14 +175,73 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        // Incluye: DNI_INVALIDO, RUC_INVALIDO, TELEFONO_INVALIDO, template no encontrado, etc.
+        // El mensaje viene de ValidadorUtil o de resolverContenido() en EnvioBaseService.
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(new ErrorResponse("VALIDACION_FALLIDA", ex.getMessage()));
+    }
+
+    /**
+     * Método HTTP incorrecto — el cliente llamó con GET en vez de POST o viceversa.
+     * Ejemplo: GET /servicios/sms/enviar cuando el endpoint es POST.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMetodoNoPermitido(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        String metodosPermitidos = ex.getSupportedHttpMethods() != null
+                ? ex.getSupportedHttpMethods().toString()
+                : "desconocido";
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(new ErrorResponse(
+                        "METODO_NO_PERMITIDO",
+                        "El método '" + ex.getMethod() + "' no está permitido para este endpoint. " +
+                        "Métodos aceptados: " + metodosPermitidos + "."));
+    }
+
+    /**
+     * Parámetro obligatorio de query string ausente.
+     * Ejemplo: GET /servicios/reniec/dni sin ?numero=
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleParametroAusente(MissingServletRequestParameterException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(new ErrorResponse(
+                        "PARAMETRO_REQUERIDO",
+                        "El parámetro '" + ex.getParameterName() + "' es obligatorio y no fue enviado."));
+    }
+
+    /**
+     * Body JSON malformado o Content-Type incorrecto.
+     * Ejemplo: POST con un JSON que tiene un error de sintaxis.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleJsonInvalido(HttpMessageNotReadableException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse(
+                        "JSON_INVALIDO",
+                        "El cuerpo de la solicitud no es un JSON válido. " +
+                        "Verifica que el Content-Type sea 'application/json' y que el formato sea correcto."));
+    }
+
+    /**
+     * Endpoint no encontrado — URL que no existe en el sistema.
+     * Ejemplo: /servicios/reniec/buscar (ruta no mapeada).
+     *
+     * Requiere spring.mvc.throw-exception-if-no-handler-found=true en application.properties.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleEndpointNoEncontrado(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse(
+                        "ENDPOINT_NO_ENCONTRADO",
+                        "La ruta '" + ex.getResourcePath() + "' no existe. " +
+                        "Verifica la URL y el método HTTP."));
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneral(Exception ex) {
         log.error("Error inesperado: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new ErrorResponse("ERROR_INTERNO", "Error inesperado del servidor."));
+                .body(new ErrorResponse("ERROR_INTERNO", "Error inesperado del servidor. " +
+                        "Si el problema persiste, contacta a soporte en soporte@extech.pe."));
     }
 }
