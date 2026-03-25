@@ -540,7 +540,7 @@ pe.extech.utilitarios.reniec.ReniecRepository
 ```
 **Líneas clave:** clase → L19 | `resolverConfiguracion()` → L42
 
-**Qué hace:** Ejecuta `uspResolverApiExternaPorUsuarioYFuncion` con código `RENIEC_DNI`. Retorna un `Map<String, Object>` con: `ApiServicesFuncionId`, `EndpointExterno`, `Token` (cifrado AES), `Autorizacion` (template `Bearer {TOKEN}`), `TiempoConsulta`.
+**Qué hace:** Ejecuta `uspResolverApiExternaPorUsuarioYFuncion` con código `RENIEC_DNI`. Retorna un `Map<String, Object>` con: `ApiServicesFuncionId`, `EndpointExterno`, `Token` (cifrado AES), `Autorizacion` (template `Bearer {TOKEN}`), `TiempoConsulta`, `SegmentoTiempo`, `Request`, `Response`.
 
 **Interviene en el flujo:** Dentro de `ReniecService`, antes de llamar a Decolecta.
 
@@ -712,7 +712,7 @@ pe.extech.utilitarios.domain.token.TokenRepository
 **Qué hace:** Gestión de tokens (API Keys) en `IT_Token_Usuario`:
 - `insertar(usuarioId, hashApiKey, fechaInicio, fechaFin)` → SP `usp_InsertarTokenUsuario`.
 - `obtenerActivo(usuarioId)` → SP `uspObtenerVigentesPorTokenUsuario`. Retorna el token activo.
-- `desactivarYCrear(usuarioId, nuevoHashApiKey, fechaInicio, fechaFin)` → SP `uspApiKeyDesactivarYCrear`. Usado en la regeneración manual.
+- `desactivarYCrear(usuarioId, nuevoHashApiKey, fechaInicio, fechaFin)` → SP `uspApiKeyDesactivarYCrear`. Hace `UPDATE` directo del registro único por usuario (sobreescribe el hash). Retorna `FilasAfectadas`. Usado en la regeneración manual.
 
 **Interviene en el flujo:** Al registrar (insertar token) y al regenerar API Key (desactivar anterior, crear nuevo).
 
@@ -1286,10 +1286,11 @@ Todos los SP viven en SQL Server. El backend los invoca con `JdbcTemplate` o `Si
 |----|-------------|---------------|
 | `usp_InsertarTokenUsuario` | Inserta API Key inicial al registrar usuario | `TokenRepository.insertar()` |
 | `uspIT_UsuarioGuardarActulizar` | Crea/actualiza usuario + asigna plan FREE automáticamente | `UsuarioRepository.guardarOActualizar()` |
-| `uspObtenerVigentesPorTokenUsuario` | Obtiene API Keys vigentes de un usuario | `TokenRepository.obtenerActivo()` |
-| `uspPlanObtenerConfiguracionCompleta` | Configuración completa del plan activo | `AuthRepository.obtenerPlanActivo()` |
-| `uspResolverApiExternaPorUsuarioYFuncion` | Resuelve endpoint + token + autorización del proveedor externo | `ReniecRepository`, `SunatRepository` |
-| `uspUsuarioValidarAcceso` | Valida credenciales por email | `AuthRepository.obtenerPorEmail()` |
+| `uspObtenerVigentesPorTokenUsuario` | Obtiene el token activo de un usuario filtrando por `Activo=1`, `Eliminado=0` y `GETDATE() BETWEEN FechaInicioVigencia AND FechaFinVigencia` | `TokenRepository.obtenerActivo()` |
+| `uspPlanObtenerConfiguracionCompleta` | Configuración completa del plan activo con sus funciones y límites | `AuthRepository.obtenerPlanActivo()` |
+| `uspResolverApiExternaPorUsuarioYFuncion` | Resuelve endpoint + token + autorización + `SegmentoTiempo` del proveedor externo | `ReniecRepository`, `SunatRepository`, `SmsRepository`, `CorreoRepository` |
+| `uspUsuarioValidarAcceso` | Valida credenciales por email; retorna `UsuarioId`, `Nombre`, `Apellido`, `Email`, `PasswordHash`, `Activo`, `Eliminado` | `AuthRepository.obtenerPorEmail()` |
+| `uspApiExternaFuncionGuardar` | Crea o actualiza la configuración de un proveedor externo en `IT_ApiExternaFuncion` (upsert por `Codigo`) | Admin / script de configuración |
 
 > El SP `uspIT_UsuarioGuardarActulizar` mantiene el typo original por compatibilidad.
 
@@ -1345,11 +1346,24 @@ Parámetros: `@UsuarioId INT`, `@NuevoPlanId INT`, `@Observacion VARCHAR(500)`, 
 Retorna: datos del nuevo `IT_PlanUsuario` activo.
 
 #### `uspApiKeyDesactivarYCrear`
-Se llama solo en regeneración manual del API Key:
-1. Marca el token anterior como `Activo=0` (sin eliminarlo, para auditoría).
-2. Inserta el nuevo token con el hash BCrypt del nuevo API Key.
+Se llama solo en regeneración manual del API Key. Como `IT_Token_Usuario.UsuarioId` tiene constraint `UNIQUE` (un solo registro por usuario), el SP hace un **UPDATE directo** del registro existente en lugar del patrón deactivate+insert:
+
+```sql
+UPDATE dbo.IT_Token_Usuario
+SET ApiKey              = @NuevoApiKey,
+    FechaInicioVigencia = @FechaInicioVigencia,
+    FechaFinVigencia    = @FechaFinVigencia,
+    Activo              = 1,
+    Eliminado           = 0,
+    UsuarioModificacion = @UsuarioId,
+    FechaModificacion   = GETDATE()
+WHERE UsuarioId = @UsuarioId AND Eliminado = 0;
+```
 
 Parámetros: `@UsuarioId INT`, `@NuevoApiKey VARCHAR(500)` (hash BCrypt), `@FechaInicioVigencia DATETIME`, `@FechaFinVigencia DATETIME`.
+Retorna: `FilasAfectadas INT`.
+
+> **Diferencia vs patrón anterior**: el SP no inserta una fila nueva ni desactiva la anterior. Sobrescribe el hash directamente. El historial de regeneraciones no queda en BD (solo existe el hash actual).
 
 #### `uspConsumoObtenerHistorialPorUsuario`
 Historial paginado de consumos. Retorna dos result sets:
@@ -1362,6 +1376,29 @@ Parámetros: `@UsuarioId INT`, `@PageNumber INT = 1`, `@PageSize INT = 20`.
 Activa o desactiva un usuario por ID.
 Parámetros: `@UsuarioId INT`, `@Activo BIT`, `@UsuarioAccion INT = NULL`.
 Retorna: `FilasAfectadas INT`.
+
+---
+
+#### `uspApiExternaFuncionGuardar`
+Crea o actualiza la configuración de un proveedor externo en `IT_ApiExternaFuncion`. Hace **upsert por `Codigo`**: si ya existe un registro con ese código y `Eliminado=0`, lo actualiza; si no existe, lo inserta.
+
+Parámetros:
+- `@Nombre VARCHAR(100)`
+- `@Codigo VARCHAR(50)` — clave única del proveedor (ej: `DECOLECTA_RENIEC`, `INFOBIP_SMS`)
+- `@Descripcion VARCHAR(500) = NULL`
+- `@Endpoint VARCHAR(500)` — URL del proveedor
+- `@Metodo VARCHAR(10)` — GET o POST
+- `@Token VARCHAR(1000)` — **ya viene cifrado AES desde el backend** antes de llamar al SP
+- `@Autorizacion VARCHAR(1000)` — template de cabecera (ej: `Bearer {TOKEN}`)
+- `@Request VARCHAR(4000) = NULL`
+- `@Response VARCHAR(4000) = NULL`
+- `@TiempoConsulta INT = 60` — timeout en segundos
+- `@SegmentoTiempo VARCHAR(10) = 'SEG'`
+- `@UsuarioRegistro INT = 1`
+
+Retorna: `Operacion` (`'INSERTADO'` o `'ACTUALIZADO'`), `ApiExternaFuncionId`, `Codigo`, `TokenLength`.
+
+> **Uso típico**: configurar o actualizar el token de Decolecta o Infobip. El token debe cifrarse con `AesUtil.cifrar()` en el backend antes de pasarlo. Nunca se envía el token en texto plano a este SP.
 
 ---
 

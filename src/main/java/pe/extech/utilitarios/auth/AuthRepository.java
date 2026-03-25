@@ -49,4 +49,33 @@ public class AuthRepository {
                 usuarioId);
         return result.isEmpty() ? Map.of() : result.get(0);
     }
+
+    /**
+     * Obtiene el límite mensual mínimo configurado para el plan.
+     * Si el plan no tiene límites en IT_PlanFuncionLimite (ej: ENTERPRISE), retorna null.
+     * Usado para mostrar limiteMaximo en GET /usuario/consumo/resumen.
+     */
+    public Integer obtenerLimiteMensualPlan(int planId) {
+        List<Map<String, Object>> result = jdbcTemplate.queryForList(
+                "SELECT MIN(Limite) AS LimiteMin " +
+                "FROM dbo.IT_PlanFuncionLimite " +
+                "WHERE PlanId = ? AND TipoLimite = 'MENSUAL' AND Activo = 1 AND Eliminado = 0",
+                planId);
+        if (result.isEmpty()) return null;
+        Object val = result.get(0).get("LimiteMin");
+        return val != null ? ((Number) val).intValue() : null;
+    }
+
+    /**
+     * Obtiene los datos personales del usuario desde IT_Usuario.
+     * Usado para construir el perfil completo en GET /usuario/perfil.
+     */
+    public Map<String, Object> obtenerDatosUsuario(int usuarioId) {
+        List<Map<String, Object>> result = jdbcTemplate.queryForList(
+                "SELECT UsuarioId, Nombre, Apellido, Email, Activo, FechaRegistro " +
+                "FROM dbo.IT_Usuario " +
+                "WHERE UsuarioId = ? AND Eliminado = 0",
+                usuarioId);
+        return result.isEmpty() ? Map.of() : result.get(0);
+    }
 }

@@ -24,9 +24,28 @@ public class UsuarioService {
     private final ApiKeyUtil apiKeyUtil;
     private final JwtUtil jwtUtil;
 
-    /** Perfil del usuario autenticado */
+    /**
+     * Perfil completo del usuario autenticado.
+     * Combina datos personales (IT_Usuario) con el plan activo (IT_PlanUsuario).
+     * Campos retornados: usuarioId, nombre, apellido, email, activo,
+     *                    fechaRegistro, planId, plan (nombre del plan).
+     */
     public Map<String, Object> obtenerPerfil(int usuarioId) {
-        return authRepository.obtenerPlanActivo(usuarioId);
+        Map<String, Object> usuario = authRepository.obtenerDatosUsuario(usuarioId);
+        Map<String, Object> plan   = authRepository.obtenerPlanActivo(usuarioId);
+
+        java.util.Map<String, Object> perfil = new java.util.HashMap<>();
+        // Datos del usuario
+        perfil.put("usuarioId",      usuario.get("UsuarioId"));
+        perfil.put("nombre",         usuario.get("Nombre"));
+        perfil.put("apellido",       usuario.get("Apellido"));
+        perfil.put("email",          usuario.get("Email"));
+        perfil.put("activo",         usuario.get("Activo"));
+        perfil.put("fechaRegistro",  usuario.get("FechaRegistro"));
+        // Datos del plan
+        perfil.put("planId",         plan.get("PlanId"));
+        perfil.put("plan",           plan.get("Nombre"));
+        return perfil;
     }
 
     /**
@@ -64,15 +83,26 @@ public class UsuarioService {
         return consumoRepository.obtenerHistorial(usuarioId, page, size);
     }
 
-    /** Resumen del consumo mensual actual vs límite */
+    /**
+     * Resumen del consumo mensual actual vs límite del plan.
+     * Campos retornados: ok, consumoActual, plan, limiteMaximo (null si sin límite).
+     */
     public Map<String, Object> obtenerResumenConsumo(int usuarioId) {
         int totalMensual = consumoRepository.obtenerTotalMensual(usuarioId, null);
         Map<String, Object> plan = authRepository.obtenerPlanActivo(usuarioId);
 
-        return Map.of(
-                "ok", true,
-                "consumoActual", totalMensual,
-                "plan", plan.getOrDefault("Nombre", "FREE")
-        );
+        java.util.Map<String, Object> resultado = new java.util.HashMap<>();
+        resultado.put("ok", true);
+        resultado.put("consumoActual", totalMensual);
+        resultado.put("plan", plan.getOrDefault("Nombre", "FREE"));
+
+        // Límite mensual del plan (null = sin límite, ej: ENTERPRISE)
+        Object planId = plan.get("PlanId");
+        if (planId != null) {
+            Integer limite = authRepository.obtenerLimiteMensualPlan(((Number) planId).intValue());
+            resultado.put("limiteMaximo", limite);
+        }
+
+        return resultado;
     }
 }
