@@ -44,7 +44,6 @@ public class ReniecController {
             Consulta los datos personales de una persona en RENIEC a través del proveedor Decolecta.
 
             **Autenticación requerida (ambos headers obligatorios):**
-            - `Authorization: Bearer <jwt>` — identifica al usuario y su plan activo.
             - `X-API-Key: <api_key>` — autoriza el consumo del servicio para ese usuario.
             Ambas credenciales deben corresponder al mismo usuario registrado.
 
@@ -54,10 +53,13 @@ public class ReniecController {
             **Stored Procedures ejecutados internamente (en orden):**
             1. `uspUsuarioObtenerPorId(@UsuarioId)` — obtiene el nombre del usuario para registrarlo en la auditoría de `IT_Consumo`.
             2. Validación local del DNI (8 dígitos numéricos) — si falla, se rechaza antes de tocar la BD o el proveedor, sin gastar consumo.
-            3. `uspResolverApiExternaPorUsuarioYFuncion(@UsuarioId, 'RENIEC_DNI')` — resuelve desde `IT_ApiExternaFuncion` el `ApiServicesFuncionId`, la URL del proveedor Decolecta y el token cifrado AES-256. El token se descifra en tiempo de ejecución y **nunca se loguea**.
-            4. `uspPlanValidarLimiteUsuario(@UsuarioId, @ApiServicesFuncionId)` — verifica si el usuario tiene consumos disponibles en su plan activo. Si ya alcanzó el límite mensual → registra el intento con `Exito=0` y retorna 429.
+            3. `uspResolverApiExternaPorUsuarioYFuncion(@UsuarioId, 'RENIEC_DNI')` — resuelve desde `IT_ApiExternaFuncion` el `ApiServicesFuncionId`, la URL del proveedor Decolecta
+             y el token cifrado AES-256. El token se descifra en tiempo de ejecución y **nunca se loguea**.
+            4. `uspPlanValidarLimiteUsuario(@UsuarioId, @ApiServicesFuncionId)` — verifica si el usuario tiene consumos disponibles en su plan activo. Si ya alcanzó el 
+            límite mensual → registra el intento con `Exito=0` y retorna 429.
             5. Llamada HTTP GET a Decolecta con `Authorization: Bearer <token_descifrado>`. Timeout: 60 s (configurable).
-            6. `uspConsumoRegistrar(...)` — registra el resultado en `IT_Consumo` con `EsConsulta=1`. Se ejecuta **siempre**, tanto si la consulta fue exitosa (`Exito=1`) como si falló (`Exito=0`). Solo los exitosos descuentan del límite mensual.
+            6. `uspConsumoRegistrar(...)` — registra el resultado en `IT_Consumo` con `EsConsulta=1`. Se ejecuta **siempre**, tanto si la consulta fue 
+            exitosa (`Exito=1`) como si falló (`Exito=0`). Solo los exitosos descuentan del límite mensual.
 
             **Regla R2:** 1 request = 1 registro en `IT_Consumo`, sin excepción.
             """

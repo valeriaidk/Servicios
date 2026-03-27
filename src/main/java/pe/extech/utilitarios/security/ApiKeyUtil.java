@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Utilidad para operaciones con API Keys.
+ * Utilidad para operaciones con API Keys. Token_Usuario
  *
  * Almacenamiento: solo hash BCrypt en IT_Token_Usuario.ApiKey.
  * El valor plano se entrega al usuario ÚNICAMENTE en el momento de:

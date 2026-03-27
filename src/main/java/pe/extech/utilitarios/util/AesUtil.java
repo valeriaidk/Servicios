@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Utilidad para cifrado y descifrado AES-256-CBC.
+ * Utilidad para cifrado y descifrado AES-256-CBC. ApiExternaFuncion
  * Usada para tokens de proveedores externos en IT_ApiExternaFuncion.Token.
  * NUNCA loguear valores descifrados.
  */

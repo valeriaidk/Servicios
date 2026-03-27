@@ -79,6 +79,7 @@ public class ReniecService implements IReniecService {
         ValidadorUtil.validarDni(dniParam);
 
         // Resolver configuración del proveedor: ApiServicesFuncionId + endpoint + token AES
+        // El SP lo lee de BD
         Map<String, Object> config = reniecRepository.resolverConfiguracion(usuarioId);
         int funcionId = ((Number) config.get("ApiServicesFuncionId")).intValue();
         String payload = "{\"numero\":\"" + dniParam + "\"}";
@@ -93,6 +94,7 @@ public class ReniecService implements IReniecService {
         // como tokens almacenados como texto plano (compatibilidad con datos existentes).
         String endpoint    = (String) config.get("EndpointExterno");
         String autorizacion = (String) config.get("Autorizacion");
+        //Se descifra en memoria
         String tokenReal   = aesUtil.descifrarConFallback((String) config.get("Token"));
 
         // ── Validación del template de Autorización ───────────────────────────
@@ -107,6 +109,7 @@ public class ReniecService implements IReniecService {
         } else {
             log.debug("[RENIEC] Autorización configurada correctamente: {}", autorizacion.replace("{TOKEN}", "[TOKEN_OCULTO]"));
         }
+        //Token de Reniec
         String authHeader  = autorizacion != null ? autorizacion.replace("{TOKEN}", tokenReal) : "";
         String authScheme  = authHeader.contains(" ")
                              ? authHeader.substring(0, authHeader.indexOf(' '))
@@ -138,6 +141,7 @@ public class ReniecService implements IReniecService {
             @SuppressWarnings("rawtypes")
             Map externa = WebClient.builder()
                     .baseUrl(urlFinal)
+                    // Se envía a Decolecta
                     .defaultHeader(HttpHeaders.AUTHORIZATION, authHeader)
                     .build()
                     .get()

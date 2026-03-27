@@ -111,6 +111,7 @@ public class SunatService implements ISunatService {
         // El endpoint en BD es: https://api.decolecta.com/v1/sunat/ruc/full?numero=
         // Ya incluye el nombre del parámetro → concatenar solo el valor del RUC.
         // Si por algún motivo en BD viene sin query string → añadir ?numero=<ruc>
+        // se construye la URL hacia Decolecta:
         final String urlFinal;
         if (endpoint.contains("?")) {
             urlFinal = endpoint + rucParam;
