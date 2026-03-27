@@ -16,7 +16,7 @@ import java.util.Map;
  * Lógica base compartida por SmsService y CorreoService (R4/R10).
  *
  * Cualquier cambio en validación de plan, templates o registro de consumo
- * afecta a ambos canales automáticamente.
+ * afecta a ambos canales automáticamente.////// CLASE PADREEEE
  */
 @Slf4j
 @RequiredArgsConstructor

@@ -205,7 +205,7 @@ JwtFilter (primero)
         │
         ▼
 ApiKeyFilter (segundo, solo /servicios/**)
-   ├── ¿Hay X-API-Key: <clave>?
+   ├── ¿Hay  : <clave>?
    │       NO → 401 { "codigo": "API_KEY_INVALIDA" }
    │       SÍ → ApiKeyUtil.resolverUsuarioId(apiKeyPlano)
    │              ├── NULL (no coincide ningún hash) → 401 { "codigo": "API_KEY_INVALIDA" }
