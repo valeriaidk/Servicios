@@ -27,67 +27,69 @@ public class TokenRepository {
      * Inserta el API Key inicial al registrar un usuario.
      * SP: usp_InsertarTokenUsuario(@UsuarioId, @TokenValue, @FechaInicioVigencia,
      *                               @FechaFinVigencia, @UsuarioRegistro)
-     * El 5to parámetro @UsuarioRegistro es requerido por el SP.
+     *
+     * Se usa queryForList (no update) porque el SP incluye un SELECT al final
+     * (SCOPE_IDENTITY u otro). jdbcTemplate.update() lanza excepción cuando el SP
+     * retorna un result set: "Se ha generado un conjunto de resultados para actualización."
      *
      * @param apiKeyHash Hash BCrypt del API Key (nunca el valor plano)
      */
     public void insertar(int usuarioId, String apiKeyHash,
                          LocalDateTime inicio, LocalDateTime fin) {
-        jdbcTemplate.update(
+        jdbcTemplate.queryForList(
                 "EXEC dbo.usp_InsertarTokenUsuario ?, ?, ?, ?, ?",
                 usuarioId, apiKeyHash, inicio, fin, usuarioId); // @UsuarioRegistro = mismo usuario
     }
 
     /**
      * Obtiene el hash BCrypt del API Key activo de un usuario.
-     * Consulta directa: no hay SP disponible para búsqueda por hash a través de todos los usuarios.
-     * Retorna null si el usuario no tiene API Key activo y vigente.
+     * SP: uspObtenerVigentesPorTokenUsuario(@UsuarioId)
+     *
+     * El SP fue corregido en v2 para manejar FechaFinVigencia IS NULL
+     * (tokens sin vencimiento). Retorna null si no hay token activo.
      */
     public String obtenerActivo(int usuarioId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT ApiKey FROM dbo.IT_Token_Usuario " +
-                "WHERE UsuarioId = ? AND Activo = 1 AND Eliminado = 0 " +
-                "AND (FechaFinVigencia IS NULL OR FechaFinVigencia > GETDATE())",
-                usuarioId);
+                "EXEC dbo.uspObtenerVigentesPorTokenUsuario ?", usuarioId);
         if (rows.isEmpty()) return null;
         Object apiKey = rows.get(0).get("ApiKey");
         return apiKey != null ? apiKey.toString() : null;
     }
 
     /**
-     * Regenera el API Key del usuario (solo cuando lo solicita explícitamente).
+     * Genera o regenera el API Key del usuario según el estado actual:
      *
-     * La tabla IT_Token_Usuario tiene UNIQUE en UsuarioId:
-     * existe EXACTAMENTE UN registro por usuario, siempre.
-     * El SP uspApiKeyDesactivarYCrear (según CLAUDE.md) hace UPDATE+INSERT, lo cual
-     * viola esa constraint y produce:
-     *   "Violation of UNIQUE KEY constraint. Cannot insert duplicate key (UsuarioId=N)."
+     *   - Si YA tiene token en IT_Token_Usuario:
+     *       → REGENERAR: llama a uspApiKeyDesactivarYCrear (UPDATE del registro existente).
+     *         Correcto porque la tabla tiene UNIQUE en UsuarioId: no se puede insertar
+     *         una segunda fila, solo actualizar la existente.
      *
-     * Solución: UPDATE directo del registro existente.
-     * Se reemplaza ApiKey, fechas y se garantiza Activo=1.
-     * No se inserta una fila nueva: la restricción UNIQUE no lo permite.
+     *   - Si NO tiene token previo (ej: UsuarioId = 4 sin registro en IT_Token_Usuario):
+     *       → CREAR PRIMERA API KEY: llama a usp_InsertarTokenUsuario vía insertar().
+     *         Sin esto, la ausencia de token terminaría en error 500 (0 filas afectadas).
+     *
+     * Este método es el único punto del backend que genera o regenera API Keys para
+     * usuarios ya registrados. El flujo de registro inicial llama a insertar() directamente.
      *
      * @param nuevoApiKey Hash BCrypt del nuevo API Key (nunca el valor plano)
-     * @throws IllegalStateException si el usuario no tiene registro en IT_Token_Usuario
      */
     public void desactivarYCrear(int usuarioId, String nuevoApiKey,
                                  LocalDateTime inicio, LocalDateTime fin) {
-        int filasAfectadas = jdbcTemplate.update(
-                "UPDATE dbo.IT_Token_Usuario " +
-                "SET ApiKey              = ?, " +
-                "    FechaInicioVigencia = ?, " +
-                "    FechaFinVigencia    = ?, " +
-                "    Activo              = 1, " +
-                "    Eliminado           = 0, " +
-                "    UsuarioModificacion = ?, " +
-                "    FechaModificacion   = GETDATE() " +
-                "WHERE UsuarioId = ? AND Eliminado = 0",
-                nuevoApiKey, inicio, fin, usuarioId, usuarioId);
+        boolean tieneTokenPrevio = (obtenerActivo(usuarioId) != null);
 
-        if (filasAfectadas == 0) {
-            throw new IllegalStateException(
-                    "No se encontró registro de API Key para el usuario " + usuarioId +
-                    ". Contacta a soporte.");
+        if (tieneTokenPrevio) {
+            // ── Regenerar: actualizar el registro existente vía SP ───────────
+            // uspApiKeyDesactivarYCrear en BD es UPDATE-only (no INSERT):
+            // la constraint UNIQUE en UsuarioId impide crear una segunda fila.
+            jdbcTemplate.queryForList(
+                    "EXEC dbo.uspApiKeyDesactivarYCrear ?, ?, ?, ?",
+                    usuarioId, nuevoApiKey, inicio, fin);
+        } else {
+            // ── Primera API Key: insertar registro nuevo vía SP ──────────────
+            // El usuario existe pero no tiene token (ej: migración de datos,
+            // registro manual en BD, o registro anterior sin token).
+            // Se usa el mismo SP que el flujo de registro normal.
+            insertar(usuarioId, nuevoApiKey, inicio, fin);
         }
     }
 }

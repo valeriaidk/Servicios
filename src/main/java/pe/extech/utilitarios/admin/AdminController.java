@@ -139,6 +139,9 @@ public class AdminController {
     )
     @GetMapping("/tools/diagnosticar-proveedores")
     public ResponseEntity<Object> diagnosticarProveedores() {
+        // SQL directo intencional: endpoint QAS marcado "ELIMINAR ANTES DE PRODUCCIÓN".
+        // Usa LEN(Token) y CASE WHEN Token IS NULL — columnas computadas no disponibles
+        // en uspApiExternaObtenerPorCodigo. Crear SP solo para este debug violaría R7.
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
             "SELECT Codigo, Endpoint, Metodo, Autorizacion, " +
             "       LEN(Token) AS TokenLongitud, " +
@@ -428,12 +431,20 @@ public class AdminController {
                                 "Error al cifrar el token. Verifica la configuración AES del servidor."));
             }
         } else {
-            // Sin token nuevo: recuperar el cifrado actual para no pisarlo con NULL
+            // Sin token nuevo: recuperar el cifrado actual para no pisarlo con NULL.
+            // SP: uspApiExternaObtenerPorCodigo(@Codigo, @SoloActivo=0)
+            // @SoloActivo=0 → incluye registros inactivos (el token debe recuperarse
+            // aunque el proveedor esté desactivado temporalmente).
             try {
-                tokenParaSP = jdbcTemplate.queryForObject(
-                    "SELECT Token FROM dbo.IT_ApiExternaFuncion " +
-                    "WHERE Codigo = ? AND Eliminado = 0",
-                    String.class, req.codigo());
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        "EXEC dbo.uspApiExternaObtenerPorCodigo ?, ?",
+                        req.codigo(), 0);
+                if (rows.isEmpty()) {
+                    return ResponseEntity.status(404)
+                            .body(Map.of("ok", false, "mensaje",
+                                    "No se encontró el proveedor con código: " + req.codigo()));
+                }
+                tokenParaSP = (String) rows.get(0).get("Token");
                 tokenActualizado = false;
             } catch (Exception e) {
                 return ResponseEntity.status(404)

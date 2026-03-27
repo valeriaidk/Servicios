@@ -141,21 +141,11 @@ public abstract class EnvioBaseService {
                                     Map<String, Object> variables,
                                     Integer version) {
         if (templateCodigo != null && !templateCodigo.isBlank()) {
-            List<Map<String, Object>> templates;
-            if (version != null) {
-                templates = jdbcTemplate.queryForList(
-                        "SELECT AsuntoTemplate FROM dbo.IT_Template " +
-                        "WHERE ApiServicesFuncionId = ? AND Canal = 'EMAIL' AND Codigo = ? " +
-                        "AND Version = ? AND Activo = 1 AND Eliminado = 0",
-                        funcionId, templateCodigo, version);
-            } else {
-                templates = jdbcTemplate.queryForList(
-                        "SELECT AsuntoTemplate FROM dbo.IT_Template " +
-                        "WHERE ApiServicesFuncionId = ? AND Canal = 'EMAIL' AND Codigo = ? " +
-                        "AND Activo = 1 AND Eliminado = 0 " +
-                        "ORDER BY Version DESC",
-                        funcionId, templateCodigo);
-            }
+            // SP: uspTemplateObtenerAsunto(@ApiServicesFuncionId, @Codigo, @Version NULL)
+            // @Version NULL → versión más reciente; con valor → versión exacta.
+            List<Map<String, Object>> templates = jdbcTemplate.queryForList(
+                    "EXEC dbo.uspTemplateObtenerAsunto ?, ?, ?",
+                    funcionId, templateCodigo, version);
 
             if (!templates.isEmpty()) {
                 String asunto = (String) templates.get(0).get("AsuntoTemplate");

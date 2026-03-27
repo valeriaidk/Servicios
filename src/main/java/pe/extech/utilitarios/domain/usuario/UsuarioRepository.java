@@ -104,9 +104,10 @@ public class UsuarioRepository {
      * Retorna null si el usuario no existe, está inactivo o eliminado.
      */
     public String obtenerNombrePorId(int usuarioId) {
+        // SP: uspUsuarioObtenerPorId(@UsuarioId) — filtra Eliminado=0
+        // El llamador lee únicamente la columna Nombre.
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT Nombre FROM dbo.IT_Usuario WHERE UsuarioId = ? AND Activo = 1 AND Eliminado = 0",
-                usuarioId);
+                "EXEC dbo.uspUsuarioObtenerPorId ?", usuarioId);
         if (rows.isEmpty()) return null;
         return (String) rows.get(0).get("Nombre");
     }

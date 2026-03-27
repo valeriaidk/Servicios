@@ -60,13 +60,10 @@ public class PlanRepository {
 
     /**
      * Lista todos los planes activos (para admin y selección en frontend).
-     * Consulta directa: no hay SP disponible para listado simple.
+     * SP: uspPlanListar — retorna PlanId, Nombre, Descripcion, PrecioMensual
+     *     ordenados por PrecioMensual ASC.
      */
     public List<Map<String, Object>> listarPlanes() {
-        return jdbcTemplate.queryForList(
-                "SELECT PlanId, Nombre, Descripcion, PrecioMensual " +
-                "FROM dbo.IT_Plan " +
-                "WHERE Activo = 1 AND Eliminado = 0 " +
-                "ORDER BY PrecioMensual ASC");
+        return jdbcTemplate.queryForList("EXEC dbo.uspPlanListar");
     }
 }

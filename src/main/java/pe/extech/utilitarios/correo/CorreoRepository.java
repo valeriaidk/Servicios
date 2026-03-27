@@ -38,9 +38,11 @@ public class CorreoRepository {
      * @throws IllegalStateException si el registro no existe o el Token es nulo.
      */
     public String obtenerClientSecretCifrado() {
+        // SP: uspApiExternaObtenerPorCodigo(@Codigo, @SoloActivo=1)
+        // Retorna configuración completa del proveedor; aquí solo se lee Token.
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT Token FROM dbo.IT_ApiExternaFuncion " +
-                "WHERE Codigo = 'MICROSOFT_GRAPH_CORREO' AND Activo = 1 AND Eliminado = 0");
+                "EXEC dbo.uspApiExternaObtenerPorCodigo ?, ?",
+                "MICROSOFT_GRAPH_CORREO", 1);
 
         if (rows.isEmpty() || rows.get(0).get("Token") == null) {
             throw new IllegalStateException(
@@ -56,10 +58,10 @@ public class CorreoRepository {
      * Lanza excepción si la función no está configurada en BD.
      */
     public int obtenerFuncionId() {
+        // SP: uspApiServicesFuncionObtenerPorCodigo(@Codigo)
+        // Retorna datos de la función interna; aquí solo se lee ApiServicesFuncionId.
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT ApiServicesFuncionId FROM dbo.IT_ApiServicesFuncion " +
-                "WHERE Codigo = ? AND Activo = 1 AND Eliminado = 0",
-                CODIGO_FUNCION);
+                "EXEC dbo.uspApiServicesFuncionObtenerPorCodigo ?", CODIGO_FUNCION);
 
         if (rows.isEmpty()) {
             throw new IllegalStateException(

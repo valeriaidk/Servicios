@@ -33,23 +33,31 @@ public class AuthService {
 
     /**
      * Registra un nuevo usuario:
-     * 1. Verifica email único
-     * 2. Hashea contraseña con BCrypt
-     * 3. Crea usuario + asigna plan FREE (vía SP)
-     * 4. Genera API Key → guarda solo el hash BCrypt en BD
-     * 5. Retorna apiKey en texto plano SOLO en esta respuesta (no recuperable después)
+     * 1. Hashea contraseña con BCrypt
+     * 2. Crea usuario + asigna plan FREE vía uspIT_UsuarioGuardarActulizar
+     *    → El SP valida email único internamente y lanza RAISERROR('El correo ya existe.')
+     *      si hay duplicado. Se captura aquí y se convierte en IllegalArgumentException.
+     *    → No se hace SELECT previo a IT_Usuario: el SP es la fuente de verdad.
+     * 3. Genera API Key → guarda solo el hash BCrypt en BD
+     * 4. Retorna apiKey en texto plano SOLO en esta respuesta (no recuperable después)
      */
     public AuthResponse registrar(RegistroRequest req) {
-        if (authRepository.existeEmail(req.email())) {
-            throw new IllegalArgumentException(
-                    "El correo " + req.email() + " ya está registrado.");
-        }
-
         String passwordHash = passwordEncoder.encode(req.password());
 
-        Map<String, Object> resultado = usuarioRepository.guardarOActualizar(
-                req.nombre(), req.apellido(), req.email(), passwordHash,
-                req.telefono(), req.razonSocial(), req.ruc());
+        Map<String, Object> resultado;
+        try {
+            resultado = usuarioRepository.guardarOActualizar(
+                    req.nombre(), req.apellido(), req.email(), passwordHash,
+                    req.telefono(), req.razonSocial(), req.ruc());
+        } catch (Exception ex) {
+            String msg = ex.getMessage() != null ? ex.getMessage() : "";
+            if (msg.contains("El correo ya existe")) {
+                throw new IllegalArgumentException(
+                        "El correo " + req.email() + " ya está registrado.");
+            }
+            throw new IllegalArgumentException(
+                    "No se pudo completar el registro: " + msg);
+        }
 
         int usuarioId = ((Number) resultado.get("UsuarioId")).intValue();
         int planId = ((Number) resultado.get("PlanId")).intValue();

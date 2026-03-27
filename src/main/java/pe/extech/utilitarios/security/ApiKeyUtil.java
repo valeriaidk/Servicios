@@ -50,7 +50,10 @@ public class ApiKeyUtil {
 
     /**
      * Busca el usuarioId cuyo API Key activo coincide con el valor en texto plano.
-     * Recorre los tokens activos y verifica con BCrypt.
+     * SP: uspTokenObtenerTodosActivos — retorna todos los tokens activos y vigentes.
+     *
+     * La comparación BCrypt es one-way y no puede hacerse en SQL:
+     * el SP encapsula solo la query; la verificación ocurre aquí con BCrypt.
      *
      * @return usuarioId si hay coincidencia, null si no.
      */
@@ -58,9 +61,7 @@ public class ApiKeyUtil {
         if (apiKeyPlano == null || apiKeyPlano.isBlank()) return null;
 
         List<Map<String, Object>> tokens = jdbcTemplate.queryForList(
-                "SELECT UsuarioId, ApiKey FROM dbo.IT_Token_Usuario " +
-                "WHERE Activo = 1 AND Eliminado = 0 " +
-                "AND (FechaFinVigencia IS NULL OR FechaFinVigencia > GETDATE())");
+                "EXEC dbo.uspTokenObtenerTodosActivos");
 
         for (Map<String, Object> token : tokens) {
             String hashBD = (String) token.get("ApiKey");

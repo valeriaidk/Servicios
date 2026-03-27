@@ -8,6 +8,8 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import static io.swagger.v3.oas.models.security.SecurityScheme.In.HEADER;
+
 @Configuration
 public class SwaggerConfig {
 
@@ -32,7 +34,7 @@ public class SwaggerConfig {
                         .addSecuritySchemes("apiKeyAuth",
                                 new SecurityScheme()
                                         .type(SecurityScheme.Type.APIKEY)
-                                        .in(SecurityScheme.In.HEADER)
+                                        .in(HEADER)
                                         .name("X-API-Key")
                                         .description("API Key para /servicios/**")));
     }
