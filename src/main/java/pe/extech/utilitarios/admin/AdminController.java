@@ -235,7 +235,7 @@ public class AdminController {
               "descripcion": "Consulta DNI completo",
               "endpoint": "https://api.decolecta.com/v1/reniec/dni?numero=",
               "metodo": "GET",
-              "token": "sk_2014.E4cobzgiX8cn7zwD2xdDLHYXdzTeCOSh",
+              "token": "TU_TOKEN_DEL_PROVEEDOR_AQUI",
               "autorizacion": "Bearer {TOKEN}",
               "tiempoConsulta": 60,
               "segmentoTiempo": "SEG"
@@ -376,7 +376,7 @@ public class AdminController {
               "codigo": "DECOLECTA_RENIEC",
               "endpoint": "https://api.decolecta.com/v1/reniec/dni?numero=",
               "metodo": "GET",
-              "token": "sk_2014.E4cobzgiX8cn7zwD2xdDLHYXdzTeCOSh",
+              "token": "TU_TOKEN_DEL_PROVEEDOR_AQUI",
               "autorizacion": "Bearer {TOKEN}",
               "tiempoConsulta": 60,
               "segmentoTiempo": "SEG"

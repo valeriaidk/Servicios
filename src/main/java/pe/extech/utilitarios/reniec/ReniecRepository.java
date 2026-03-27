@@ -7,13 +7,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Repositorio RENIEC — resuelve la configuración del proveedor externo (Decolecta).
+ * Repositorio RENIEC — resuelve la configuración del proveedor externo (Decolecta)
+ * necesaria para ejecutar la consulta de DNI.
  *
- * Usa uspResolverApiExternaPorUsuarioYFuncion(@UsuarioId, @CodigoFuncion)
- * que retorna en una sola llamada: ApiServicesFuncionId, EndpointExterno,
- * Token (cifrado AES-256), Autorizacion, TiempoConsulta.
+ * <p>Este repositorio tiene un único propósito: encapsular la llamada al SP
+ * {@code uspResolverApiExternaPorUsuarioYFuncion} y devolver al servicio todo lo que
+ * necesita para llamar al proveedor externo en una sola consulta a BD, sin
+ * acceso directo a las tablas {@code IT_ApiAsignacion} ni {@code IT_ApiExternaFuncion}.</p>
  *
- * Esto reemplaza las consultas directas a IT_ApiAsignacion/IT_ApiExternaFuncion.
+ * <p>Patrón uniforme del proyecto: {@code JdbcTemplate.queryForList("EXEC ...")}
+ * en lugar de {@code SimpleJdbcCall}, porque {@code SimpleJdbcCall} envuelve los
+ * result sets bajo claves auto-generadas ({@code #result-set-1}) que rompen la
+ * lectura directa de columnas. {@code queryForList} retorna la lista de filas tal cual.</p>
  */
 @Repository
 public class ReniecRepository {
@@ -27,17 +32,39 @@ public class ReniecRepository {
     }
 
     /**
-     * Resuelve toda la configuración necesaria para ejecutar la consulta RENIEC.
-     * SP: uspResolverApiExternaPorUsuarioYFuncion(@UsuarioId INT, @CodigoFuncion VARCHAR)
+     * Resuelve toda la configuración del proveedor Decolecta para la función RENIEC_DNI.
      *
-     * Columnas clave del resultado:
-     *   ApiServicesFuncionId → usado para registrar consumo en IT_Consumo
-     *   EndpointExterno      → URL del proveedor Decolecta
-     *   Token                → token cifrado AES-256 (descifrar con AesUtil antes de usar)
-     *   Autorizacion         → header Authorization (contiene placeholder {TOKEN})
-     *   TiempoConsulta       → timeout en segundos
+     * <p><b>SP ejecutado:</b> {@code uspResolverApiExternaPorUsuarioYFuncion(@UsuarioId, @CodigoFuncion)}</p>
      *
-     * @param usuarioId ID del usuario autenticado (validado por el SP)
+     * <p><b>Qué hace el SP internamente:</b> une {@code IT_ApiServicesFuncion} con
+     * {@code IT_ApiAsignacion} y {@code IT_ApiExternaFuncion} para devolver en una sola
+     * llamada toda la configuración necesaria del proveedor asignado a esa función.</p>
+     *
+     * <p><b>Columnas retornadas y para qué se usa cada una:</b></p>
+     * <ul>
+     *   <li>{@code ApiServicesFuncionId} — ID de la función interna RENIEC_DNI.
+     *       Se pasa a {@code uspPlanValidarLimiteUsuario} y a {@code uspConsumoRegistrar}
+     *       para identificar qué servicio se está consumiendo.</li>
+     *   <li>{@code EndpointExterno} — URL completa del endpoint de Decolecta
+     *       (ej: {@code https://api.decolecta.com/v1/reniec/dni}).
+     *       Se usa como {@code baseUrl} del {@code WebClient} para la llamada HTTP GET.</li>
+     *   <li>{@code Token} — token de autenticación cifrado con AES-256.
+     *       Se descifra en runtime con {@link pe.extech.utilitarios.util.AesUtil}
+     *       y se usa para construir el header {@code Authorization: Bearer <token_descifrado>}.
+     *       Nunca se loguea ni persiste en texto plano (R8).</li>
+     *   <li>{@code Autorizacion} — template del header de autorización almacenado en BD
+     *       (ej: {@code "Bearer {TOKEN}"}). El placeholder {@code {TOKEN}} se reemplaza
+     *       con el token descifrado en tiempo de ejecución.</li>
+     *   <li>{@code TiempoConsulta} — timeout configurado en segundos para esta función.
+     *       Si no se usa, el servicio aplica el valor por defecto de {@code application.properties}.</li>
+     * </ul>
+     *
+     * <p>Lanza {@code IllegalStateException} si no existe configuración para la combinación
+     * usuario+función en {@code IT_ApiAsignacion}, lo que indica un problema de configuración
+     * en BD que debe resolverse antes de poder usar el servicio.</p>
+     *
+     * @param usuarioId ID del usuario autenticado (extraído del JWT por el controller)
+     * @return Mapa con las columnas descritas arriba, listo para ser consumido por {@link ReniecService}
      */
     public Map<String, Object> resolverConfiguracion(int usuarioId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(

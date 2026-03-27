@@ -12,14 +12,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Repositorio de consumo (IT_Consumo) — acceso exclusivo vía Stored Procedures.
+ * Repositorio de consumo ({@code IT_Consumo}) — acceso exclusivo vía Stored Procedures.
  *
- * Regla R2: 1 request = 1 registro en IT_Consumo, siempre, incluso si falla.
- * Regla R3: IT_Consumo es la única tabla de auditoría y registro.
+ * <p>Centraliza todas las operaciones sobre {@code IT_Consumo}, que es la única tabla
+ * de auditoría y registro del sistema (R3). Ningún otro repositorio escribe en esta tabla.</p>
  *
- * Para uspConsumoObtenerHistorialPorUsuario (multi-result-set) se usa
- * jdbcTemplate.execute(ConnectionCallback) con JDBC nativo, porque queryForList
- * solo lee el primer result set.
+ * <p><b>Regla R2:</b> cada request a cualquier servicio (RENIEC, SUNAT, SMS, Correo)
+ * registra exactamente 1 entrada en {@code IT_Consumo}, sin excepción. Solo los registros
+ * con {@code Exito=1} descuentan del límite mensual del plan.</p>
+ *
+ * <p><b>Patrón de acceso:</b> {@code JdbcTemplate.queryForList("EXEC ...")} para SPs
+ * de resultado único. Para {@code uspConsumoObtenerHistorialPorUsuario}, que devuelve
+ * dos result sets (total + filas paginadas), se usa {@code jdbcTemplate.execute(ConnectionCallback)}
+ * con JDBC nativo, porque {@code queryForList} solo lee el primer result set.</p>
  */
 @Repository
 public class ConsumoRepository {
@@ -31,13 +36,34 @@ public class ConsumoRepository {
     }
 
     /**
-     * Registra 1 consumo en IT_Consumo con nombre visible del usuario (R2).
-     * SP: uspConsumoRegistrar(@UsuarioId, @ApiServicesFuncionId, @Request, @Response,
-     *                         @Exito, @EsConsulta, @UsuarioRegistro VARCHAR(200))
+     * Registra exactamente 1 consumo en {@code IT_Consumo} (R2).
      *
-     * @param nombreUsuario nombre de IT_Usuario.Nombre — se persiste en IT_Consumo.UsuarioRegistro
-     *                      (varchar 200). Null aceptado: el SP tiene DEFAULT NULL para ese param.
-     * Columna retornada: ConsumoId (SCOPE_IDENTITY).
+     * <p><b>SP ejecutado:</b> {@code uspConsumoRegistrar(@UsuarioId, @ApiServicesFuncionId,
+     * @Request, @Response, @Exito, @EsConsulta, @UsuarioRegistro)}</p>
+     *
+     * <p><b>Qué hace el SP:</b> inserta una fila en {@code IT_Consumo} con timestamp
+     * {@code GETDATE()}, {@code Activo=1} y {@code Eliminado=0}. Retorna el {@code ConsumoId}
+     * generado via {@code SCOPE_IDENTITY()}.</p>
+     *
+     * <p><b>Parámetros clave:</b></p>
+     * <ul>
+     *   <li>{@code @Request} / {@code @Response} — payload de entrada y salida, truncados a
+     *       4000 caracteres antes de pasarlos al SP para respetar el {@code VARCHAR(4000)}
+     *       de la columna en BD.</li>
+     *   <li>{@code @Exito} — {@code 1} si el servicio respondió correctamente,
+     *       {@code 0} si hubo error del proveedor o límite alcanzado. Solo los {@code Exito=1}
+     *       descuentan del límite mensual del plan.</li>
+     *   <li>{@code @EsConsulta} — {@code 1} para RENIEC/SUNAT (consultas de datos),
+     *       {@code 0} para SMS/Correo (acciones de envío). Discriminador para métricas.</li>
+     *   <li>{@code @UsuarioRegistro} — nombre visible del usuario ({@code IT_Usuario.Nombre}),
+     *       truncado a 200 caracteres. {@code NULL} aceptado: el SP tiene {@code DEFAULT NULL}.</li>
+     * </ul>
+     *
+     * <p>Este método siempre se llama, incluso si el servicio externo falló, para garantizar
+     * la trazabilidad completa de todos los intentos (R2 + R3).</p>
+     *
+     * @param nombreUsuario nombre de {@code IT_Usuario.Nombre}; se persiste en
+     *                      {@code IT_Consumo.UsuarioRegistro} para legibilidad en auditoría
      */
     public Long registrar(int usuarioId, int apiServicesFuncionId,
                           String request, String response,
@@ -58,8 +84,9 @@ public class ConsumoRepository {
     }
 
     /**
-     * Sobrecarga sin nombre — para paths de error donde el nombre no está disponible.
-     * Persiste NULL en IT_Consumo.UsuarioRegistro.
+     * Sobrecarga sin {@code nombreUsuario} — para rutas de error donde el nombre
+     * no está disponible (ej: fallo antes de resolver el usuario).
+     * Persiste {@code NULL} en {@code IT_Consumo.UsuarioRegistro}.
      */
     public Long registrar(int usuarioId, int apiServicesFuncionId,
                           String request, String response,
@@ -69,15 +96,34 @@ public class ConsumoRepository {
     }
 
     /**
-     * Valida si el usuario puede consumir la función según su plan.
-     * SP: uspPlanValidarLimiteUsuario(@UsuarioId, @ApiServicesFuncionId)
+     * Valida si el usuario puede consumir la función según su plan activo.
      *
-     * Columnas retornadas: PuedeContinuar (BIT), ConsumoActual, LimiteMaximo,
-     *                      NombrePlan, MensajeError.
+     * <p><b>SP ejecutado:</b> {@code uspPlanValidarLimiteUsuario(@UsuarioId, @ApiServicesFuncionId)}</p>
      *
-     * IMPORTANTE: si el usuario no tiene plan activo, el SP devuelve NombrePlan = ''
-     * y PuedeContinuar = 1 (bug de diseño del SP). El llamador debe verificar
-     * NombrePlan para cumplir la Regla 9.
+     * <p><b>Qué hace el SP:</b> obtiene el plan activo del usuario desde {@code IT_PlanUsuario},
+     * busca el límite configurado en {@code IT_PlanFuncionLimite} para ese plan y función, y
+     * cuenta los consumos exitosos del mes actual en {@code IT_Consumo}. Si no existe registro
+     * en {@code IT_PlanFuncionLimite} para esa combinación plan+función (ej: plan ENTERPRISE),
+     * el SP considera que no hay límite y retorna {@code PuedeContinuar=1}.</p>
+     *
+     * <p><b>Columnas retornadas:</b></p>
+     * <ul>
+     *   <li>{@code PuedeContinuar} (BIT) — {@code 1} si puede consumir, {@code 0} si alcanzó
+     *       el límite. El servicio debe cortar aquí si es {@code 0}, registrar el intento
+     *       con {@code Exito=0} y lanzar {@code LimiteAlcanzadoException}.</li>
+     *   <li>{@code ConsumoActual} — total de consumos exitosos del mes para esa función.
+     *       Se incluye en la respuesta al cliente para informar cuánto llevan.</li>
+     *   <li>{@code LimiteMaximo} — límite configurado en {@code IT_PlanFuncionLimite}.
+     *       {@code NULL} si el plan no tiene límite para esa función.</li>
+     *   <li>{@code Plan} — nombre del plan activo (FREE, BASIC, PRO, ENTERPRISE).
+     *       Se incluye en la respuesta y en el mensaje de error si se supera el límite.</li>
+     *   <li>{@code MensajeError} — texto descriptivo pre-generado por el SP cuando
+     *       {@code PuedeContinuar=0}, listo para devolver al cliente.</li>
+     * </ul>
+     *
+     * <p><b>IMPORTANTE:</b> si el usuario no tiene plan activo, el SP devuelve
+     * {@code NombrePlan=''} y {@code PuedeContinuar=1}. El llamador ({@link pe.extech.utilitarios.util.EnvioBaseService})
+     * verifica {@code NombrePlan} para bloquear usuarios sin plan (Regla 9).</p>
      */
     public Map<String, Object> validarLimitePlan(int usuarioId, int apiServicesFuncionId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
@@ -92,14 +138,30 @@ public class ConsumoRepository {
 
     /**
      * Historial paginado de consumos de un usuario.
-     * SP: uspConsumoObtenerHistorialPorUsuario(@UsuarioId, @PageNumber, @PageSize)
      *
-     * El SP retorna DOS result sets:
-     *   1) SELECT COUNT(1) AS TotalRegistros
-     *   2) Filas paginadas con ConsumoId, Funcion, CodigoFuncion, Exito, EsConsulta, FechaRegistro
+     * <p><b>SP ejecutado:</b> {@code uspConsumoObtenerHistorialPorUsuario(@UsuarioId, @PageNumber, @PageSize)}</p>
      *
-     * Se usa jdbcTemplate.execute(ConnectionCallback) con JDBC nativo porque
-     * queryForList solo lee el primer result set.
+     * <p><b>Qué hace el SP:</b> retorna dos result sets en una sola llamada. El primero
+     * contiene el total de registros (para la paginación en el frontend). El segundo
+     * contiene las filas de la página solicitada, unidas con {@code IT_ApiServicesFuncion}
+     * para mostrar el nombre y código de la función consumida.</p>
+     *
+     * <p><b>Result set 1:</b> {@code TotalRegistros} — total de consumos del usuario
+     * (sin paginar). Necesario para calcular el número de páginas en el frontend.</p>
+     *
+     * <p><b>Result set 2 (filas paginadas):</b></p>
+     * <ul>
+     *   <li>{@code ConsumoId} — identificador del consumo.</li>
+     *   <li>{@code Funcion} — nombre legible de la función (ej: "Consulta por DNI").</li>
+     *   <li>{@code CodigoFuncion} — código interno (ej: {@code RENIEC_DNI}).</li>
+     *   <li>{@code Exito} — BIT leído como {@code boolean} para evitar {@code ClassCastException}.</li>
+     *   <li>{@code EsConsulta} — BIT que distingue consultas de datos vs. acciones de envío.</li>
+     *   <li>{@code FechaRegistro} — timestamp del consumo.</li>
+     * </ul>
+     *
+     * <p><b>Por qué se usa JDBC nativo:</b> {@code queryForList} solo lee el primer result set
+     * y descarta los demás. Para leer dos result sets secuencialmente se necesita
+     * {@code jdbcTemplate.execute(ConnectionCallback)} con {@code CallableStatement.getMoreResults()}.</p>
      */
     public Map<String, Object> obtenerHistorial(int usuarioId, int pageNumber, int pageSize) {
         return jdbcTemplate.execute((Connection con) -> {
@@ -149,9 +211,20 @@ public class ConsumoRepository {
 
     /**
      * Total de consumos exitosos del mes actual para el usuario.
-     * SP: uspConsumoObtenerTotalMensualPorUsuario(@UsuarioId, @ApiServicesFuncionId)
-     * @param apiServicesFuncionId null = todas las funciones del mes
-     * Columna retornada: TotalConsumos.
+     *
+     * <p><b>SP ejecutado:</b> {@code uspConsumoObtenerTotalMensualPorUsuario(@UsuarioId, @ApiServicesFuncionId)}</p>
+     *
+     * <p><b>Qué hace el SP:</b> cuenta los registros en {@code IT_Consumo} donde
+     * {@code Exito=1} y {@code FechaRegistro} cae en el mes y año actuales.
+     * Retorna una sola columna: {@code TotalConsumos}.</p>
+     *
+     * <p><b>Uso del parámetro {@code apiServicesFuncionId}:</b></p>
+     * <ul>
+     *   <li>{@code NULL} — cuenta todos los consumos del mes sin filtrar por función.
+     *       Usado en {@code GET /usuario/consumo/resumen} para el total global del mes.</li>
+     *   <li>Con valor — cuenta solo los consumos de esa función específica.
+     *       Útil para mostrar el consumo por servicio individualmente.</li>
+     * </ul>
      */
     public int obtenerTotalMensual(int usuarioId, Integer apiServicesFuncionId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(

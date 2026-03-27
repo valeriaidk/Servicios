@@ -8,11 +8,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Repositorio de tokens / API Keys (IT_Token_Usuario).
+ * Repositorio de API Keys ({@code IT_Token_Usuario}) — acceso exclusivo vía Stored Procedures.
  *
- * R8: El API Key NUNCA se almacena en texto plano.
- * Solo se almacena el hash BCrypt en IT_Token_Usuario.ApiKey.
- * El valor plano se entrega al usuario únicamente al registrarse o regenerar manualmente.
+ * <p>Gestiona el ciclo de vida completo del API Key: inserción inicial al registrarse,
+ * consulta del hash activo para validación en cada request, y regeneración manual.</p>
+ *
+ * <p><b>Regla R8:</b> el API Key NUNCA se almacena en texto plano. Solo el hash BCrypt
+ * se persiste en {@code IT_Token_Usuario.ApiKey}. El valor plano se entrega al usuario
+ * únicamente al registrarse o al solicitar regeneración manual, y no es recuperable
+ * posteriormente.</p>
+ *
+ * <p>La tabla {@code IT_Token_Usuario} tiene una restricción {@code UNIQUE} en
+ * {@code UsuarioId}: un usuario puede tener a lo sumo un API Key activo a la vez.
+ * Esto condiciona la lógica de {@link #desactivarYCrear}.</p>
  */
 @Repository
 public class TokenRepository {
@@ -24,15 +32,26 @@ public class TokenRepository {
     }
 
     /**
-     * Inserta el API Key inicial al registrar un usuario.
-     * SP: usp_InsertarTokenUsuario(@UsuarioId, @TokenValue, @FechaInicioVigencia,
-     *                               @FechaFinVigencia, @UsuarioRegistro)
+     * Inserta el API Key inicial al registrar un usuario nuevo.
      *
-     * Se usa queryForList (no update) porque el SP incluye un SELECT al final
-     * (SCOPE_IDENTITY u otro). jdbcTemplate.update() lanza excepción cuando el SP
-     * retorna un result set: "Se ha generado un conjunto de resultados para actualización."
+     * <p><b>SP ejecutado:</b> {@code usp_InsertarTokenUsuario(@UsuarioId, @TokenValue,
+     * @FechaInicioVigencia, @FechaFinVigencia, @UsuarioRegistro)}</p>
      *
-     * @param apiKeyHash Hash BCrypt del API Key (nunca el valor plano)
+     * <p><b>Qué hace el SP:</b> inserta una fila en {@code IT_Token_Usuario} con
+     * {@code Activo=1} y {@code Eliminado=0}. El campo {@code @TokenValue} recibe el
+     * hash BCrypt — nunca el valor plano (R8). Al final ejecuta un {@code SELECT}
+     * para retornar el {@code TokenId} generado.</p>
+     *
+     * <p><b>Por qué se usa {@code queryForList} en vez de {@code update}:</b>
+     * el SP incluye un {@code SELECT} al final del cuerpo. {@code jdbcTemplate.update()}
+     * lanza la excepción <i>"Se ha generado un conjunto de resultados para actualización"</i>
+     * cuando el SP retorna filas. {@code queryForList} maneja ambos casos (con o sin
+     * result set) sin error.</p>
+     *
+     * <p>También se llama desde {@link #desactivarYCrear} cuando el usuario no tiene
+     * token previo en BD (ej: migración de datos o registro manual en BD).</p>
+     *
+     * @param apiKeyHash hash BCrypt del API Key — nunca el valor plano (R8)
      */
     public void insertar(int usuarioId, String apiKeyHash,
                          LocalDateTime inicio, LocalDateTime fin) {
@@ -42,11 +61,21 @@ public class TokenRepository {
     }
 
     /**
-     * Obtiene el hash BCrypt del API Key activo de un usuario.
-     * SP: uspObtenerVigentesPorTokenUsuario(@UsuarioId)
+     * Obtiene el hash BCrypt del API Key activo del usuario.
      *
-     * El SP fue corregido en v2 para manejar FechaFinVigencia IS NULL
-     * (tokens sin vencimiento). Retorna null si no hay token activo.
+     * <p><b>SP ejecutado:</b> {@code uspObtenerVigentesPorTokenUsuario(@UsuarioId)}</p>
+     *
+     * <p><b>Qué hace el SP:</b> busca en {@code IT_Token_Usuario} el registro con
+     * {@code Activo=1}, {@code Eliminado=0} y {@code FechaFinVigencia} mayor a
+     * {@code GETDATE()} (o {@code IS NULL} para tokens sin vencimiento).
+     * Este manejo de {@code NULL} fue corregido en el SP v2 — sin él, los tokens
+     * sin vencimiento nunca eran encontrados.</p>
+     *
+     * <p><b>Uso principal:</b> llamado por {@link pe.extech.utilitarios.security.ApiKeyFilter}
+     * en cada request a {@code /servicios/**} para obtener el hash y compararlo con
+     * el valor plano recibido en el header {@code X-API-Key} mediante BCrypt.</p>
+     *
+     * @return hash BCrypt del API Key activo, o {@code null} si no hay ninguno vigente
      */
     public String obtenerActivo(int usuarioId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
