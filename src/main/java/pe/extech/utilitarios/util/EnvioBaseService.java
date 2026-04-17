@@ -5,9 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
-import pe.extech.utilitarios.domain.consumo.ConsumoRepository;
-import pe.extech.utilitarios.domain.usuario.UsuarioRepository;
+
 import pe.extech.utilitarios.exception.LimiteAlcanzadoException;
+import pe.extech.utilitarios.modules.user.domain.repository.ConsumoRepository;
+import pe.extech.utilitarios.modules.user.domain.repository.UsuarioRepository;
 
 import java.util.List;
 import java.util.Map;
@@ -31,8 +32,8 @@ public abstract class EnvioBaseService {
     /**
      * Resuelve el nombre visible del usuario por su ID.
      * Se usa para:
-     *   - persistir en IT_Consumo.UsuarioRegistro (VARCHAR 200)
-     *   - exponer como "nombreUsuario" en la respuesta JSON
+     * - persistir en IT_Consumo.UsuarioRegistro (VARCHAR 200)
+     * - exponer como "nombreUsuario" en la respuesta JSON
      * Devuelve null si no se encuentra (NON_NULL en el DTO lo omite del JSON).
      */
     protected String resolverNombreUsuario(int usuarioId) {
@@ -49,16 +50,19 @@ public abstract class EnvioBaseService {
      * Si no puede: registra consumo fallido (R2) y lanza excepción.
      * Si puede: retorna PlanContext con (plan, consumoActual, limiteMaximo).
      *
-     * Regla 9: si el SP retorna NombrePlan vacío, el usuario no tiene plan activo → bloquear.
+     * Regla 9: si el SP retorna NombrePlan vacío, el usuario no tiene plan activo →
+     * bloquear.
      * consumoActual en el PlanContext es el conteo ANTES de este request.
      * Para mostrar en la respuesta, usar consumoActual + 1.
      */
     /**
      * Valida si el usuario puede consumir la función.
-     * Si no puede: registra consumo fallido (R2) con el nombre del usuario y lanza excepción.
+     * Si no puede: registra consumo fallido (R2) con el nombre del usuario y lanza
+     * excepción.
      * Si puede: retorna PlanContext con (plan, consumoActual, limiteMaximo).
      *
-     * @param nombreUsuario se persiste en IT_Consumo.UsuarioRegistro incluso en error,
+     * @param nombreUsuario se persiste en IT_Consumo.UsuarioRegistro incluso en
+     *                      error,
      *                      para que la auditoría identifique quién agotó el límite.
      */
     protected PlanContext validarPlan(int usuarioId, int funcionId, String nombreUsuario) {
@@ -66,7 +70,8 @@ public abstract class EnvioBaseService {
 
         // Regla 9: sin plan activo → bloquear aunque PuedeContinuar sea 1
         String nombrePlan = resultado.containsKey("NombrePlan")
-                ? (String) resultado.get("NombrePlan") : "";
+                ? (String) resultado.get("NombrePlan")
+                : "";
         if (nombrePlan == null || nombrePlan.isBlank()) {
             consumoRepository.registrar(usuarioId, funcionId, null,
                     "Usuario sin plan activo.", false, false, nombreUsuario);
@@ -74,17 +79,21 @@ public abstract class EnvioBaseService {
                     "No tienes un plan activo. Contáctate con soporte.", 0, 0, "SIN_PLAN");
         }
 
-        // BIT: el driver MS JDBC retorna columnas BIT como Boolean; usar ValidadorUtil.bit()
+        // BIT: el driver MS JDBC retorna columnas BIT como Boolean; usar
+        // ValidadorUtil.bit()
         boolean puede = ValidadorUtil.bit(resultado.get("PuedeContinuar"));
         int consumoActual = resultado.containsKey("ConsumoActual")
-                ? ((Number) resultado.get("ConsumoActual")).intValue() : 0;
+                ? ((Number) resultado.get("ConsumoActual")).intValue()
+                : 0;
         Integer limiteMaximo = resultado.containsKey("LimiteMaximo") && resultado.get("LimiteMaximo") != null
-                ? ((Number) resultado.get("LimiteMaximo")).intValue() : null;
+                ? ((Number) resultado.get("LimiteMaximo")).intValue()
+                : null;
 
         if (!puede) {
             int lim = limiteMaximo != null ? limiteMaximo : 0;
             String mensaje = resultado.containsKey("MensajeError")
-                    ? (String) resultado.get("MensajeError") : "Límite de consumo alcanzado.";
+                    ? (String) resultado.get("MensajeError")
+                    : "Límite de consumo alcanzado.";
             consumoRepository.registrar(usuarioId, funcionId, null, mensaje,
                     false, false, nombreUsuario);
             throw new LimiteAlcanzadoException(mensaje, consumoActual, lim, nombrePlan);
@@ -96,29 +105,32 @@ public abstract class EnvioBaseService {
     /**
      * Resuelve el contenido del mensaje cargando el template desde el classpath.
      *
-     * Ruta: templates/{canal_lowercase}/{templateCodigo_lowercase}.html  (EMAIL)
-     *       templates/{canal_lowercase}/{templateCodigo_lowercase}.txt   (SMS)
+     * Ruta: templates/{canal_lowercase}/{templateCodigo_lowercase}.html (EMAIL)
+     * templates/{canal_lowercase}/{templateCodigo_lowercase}.txt (SMS)
      *
      * Ejemplos:
-     *   - EMAIL + OTP      → templates/correo/otp.html
-     *   - SMS   + OTP      → templates/sms/otp.txt
-     *   - EMAIL + BIENVENIDA → templates/correo/bienvenida.html
+     * - EMAIL + OTP → templates/correo/otp.html
+     * - SMS + OTP → templates/sms/otp.txt
+     * - EMAIL + BIENVENIDA → templates/correo/bienvenida.html
      *
-     * El AsuntoTemplate sigue leyendo desde IT_Template en BD (via resolverAsunto()).
-     * Esto permite cambiar el asunto sin redeploy, mientras el cuerpo está versionado en git.
+     * El AsuntoTemplate sigue leyendo desde IT_Template en BD (via
+     * resolverAsunto()).
+     * Esto permite cambiar el asunto sin redeploy, mientras el cuerpo está
+     * versionado en git.
      *
      * Si no viene templateCodigo: usa variables.get("cuerpo") (modo INLINE).
-     * El parámetro version se ignora — la versión se controla con el nombre del archivo.
+     * El parámetro version se ignora — la versión se controla con el nombre del
+     * archivo.
      */
     protected String resolverContenido(int funcionId, String canal,
-                                       String templateCodigo,
-                                       Map<String, Object> variables,
-                                       Integer version) {
+            String templateCodigo,
+            Map<String, Object> variables,
+            Integer version) {
         if (templateCodigo != null && !templateCodigo.isBlank()) {
             // Extensión: EMAIL usa .html, SMS usa .txt
             String extension = "EMAIL".equalsIgnoreCase(canal) ? ".html" : ".txt";
-            String carpeta   = "EMAIL".equalsIgnoreCase(canal) ? "correo" : "sms";
-            String ruta      = "templates/" + carpeta + "/" + templateCodigo.toLowerCase() + extension;
+            String carpeta = "EMAIL".equalsIgnoreCase(canal) ? "correo" : "sms";
+            String ruta = "templates/" + carpeta + "/" + templateCodigo.toLowerCase() + extension;
 
             String cuerpo = plantillaUtil.cargarDesdeClasspath(ruta);
             return plantillaUtil.renderizar(cuerpo, variables);
@@ -128,8 +140,8 @@ public abstract class EnvioBaseService {
 
     /** Sobrecarga sin versión — compatibilidad con llamadas existentes. */
     protected String resolverContenido(int funcionId, String canal,
-                                       String templateCodigo,
-                                       Map<String, Object> variables) {
+            String templateCodigo,
+            Map<String, Object> variables) {
         return resolverContenido(funcionId, canal, templateCodigo, variables, null);
     }
 
@@ -138,8 +150,8 @@ public abstract class EnvioBaseService {
      * Acepta versión opcional para elegir la versión exacta del template.
      */
     protected String resolverAsunto(int funcionId, String templateCodigo,
-                                    Map<String, Object> variables,
-                                    Integer version) {
+            Map<String, Object> variables,
+            Integer version) {
         if (templateCodigo != null && !templateCodigo.isBlank()) {
             // SP: uspTemplateObtenerAsunto(@ApiServicesFuncionId, @Codigo, @Version NULL)
             // @Version NULL → versión más reciente; con valor → versión exacta.
@@ -157,7 +169,7 @@ public abstract class EnvioBaseService {
 
     /** Sobrecarga sin versión. */
     protected String resolverAsunto(int funcionId, String templateCodigo,
-                                    Map<String, Object> variables) {
+            Map<String, Object> variables) {
         return resolverAsunto(funcionId, templateCodigo, variables, null);
     }
 
@@ -167,18 +179,19 @@ public abstract class EnvioBaseService {
      * El nombre se persiste en IT_Consumo.UsuarioRegistro (VARCHAR 200).
      */
     protected void registrarConsumo(int usuarioId, int funcionId,
-                                     String request, String response, boolean exito,
-                                     String nombreUsuario) {
+            String request, String response, boolean exito,
+            String nombreUsuario) {
         consumoRepository.registrar(usuarioId, funcionId, request, response,
                 exito, false, nombreUsuario);
     }
 
     /**
-     * Sobrecarga sin nombre — para paths de error donde el nombre no está disponible.
+     * Sobrecarga sin nombre — para paths de error donde el nombre no está
+     * disponible.
      * Persiste NULL en IT_Consumo.UsuarioRegistro.
      */
     protected void registrarConsumo(int usuarioId, int funcionId,
-                                     String request, String response, boolean exito) {
+            String request, String response, boolean exito) {
         consumoRepository.registrar(usuarioId, funcionId, request, response, exito, false);
     }
 
