@@ -176,7 +176,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
         // Incluye: DNI_INVALIDO, RUC_INVALIDO, TELEFONO_INVALIDO, template no encontrado, etc.
-        // El mensaje viene de ValidadorUtil o de resolverContenido() en EnvioBaseService.
+        // El mensaje viene de ValidadorUtil o de la resolución de contenido/plantilla en los UseCases.
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(new ErrorResponse("VALIDACION_FALLIDA", ex.getMessage()));
     }

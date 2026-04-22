@@ -171,9 +171,9 @@ public class ConsumoRepository {
      *
      * <p>
      * <b>IMPORTANTE:</b> si el usuario no tiene plan activo, el SP devuelve
-     * {@code NombrePlan=''} y {@code PuedeContinuar=1}. El llamador
-     * ({@link pe.extech.utilitarios.util.EnvioBaseService})
-     * verifica {@code NombrePlan} para bloquear usuarios sin plan (Regla 9).
+     * {@code NombrePlan=''} y {@code PuedeContinuar=1}. Los UseCases
+     * de sunat/sms/correo verifican {@code NombrePlan} para bloquear
+     * usuarios sin plan (Regla 9).
      * </p>
      */
     public Map<String, Object> validarLimitePlan(int usuarioId, int apiServicesFuncionId) {
