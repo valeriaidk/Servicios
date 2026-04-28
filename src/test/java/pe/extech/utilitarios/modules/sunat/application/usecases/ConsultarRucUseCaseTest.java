@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -41,108 +42,109 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ConsultarRucUseCaseTest {
 
-    private static final int USUARIO_ID = 1;
-    private static final int FUNCION_ID = 10;
-    private static final String RUC_VALIDO = "20100070970";
+        private static final int USUARIO_ID = 1;
+        private static final int FUNCION_ID = 10;
+        private static final String RUC_VALIDO = "20100070970";
 
-    @Mock
-    private SunatConfigRepository sunatRepository;
-    @Mock
-    private ConsumoRepository consumoRepository;
-    @Mock
-    private UsuarioRepository usuarioRepository;
-    @Mock
-    private SunatProvider sunatProvider;
+        @Mock
+        private SunatConfigRepository sunatRepository;
+        @Mock
+        private ConsumoRepository consumoRepository;
+        @Mock
+        private UsuarioRepository usuarioRepository;
+        @Mock
+        private SunatProvider sunatProvider;
 
-    private ObjectMapper objectMapper;
-    private DecolectaSunatMapper mapper;
-    private ConsultarRucUseCase useCase;
+        @Spy
+        private ObjectMapper objectMapper = new ObjectMapper();
 
-    @BeforeEach
-    void setUp() {
-        objectMapper = new ObjectMapper();
-        mapper = new DecolectaSunatMapper(objectMapper);
-        SunatProviderFactory factory = new SunatProviderFactory(List.of(sunatProvider));
-        useCase = new ConsultarRucUseCase(
-                sunatRepository, consumoRepository, usuarioRepository,
-                factory, mapper, objectMapper);
-    }
+        private DecolectaSunatMapper mapper;
+        private ConsultarRucUseCase useCase;
 
-    @Test
-    void consultaExitosa_retornaResponseYRegistraConsumoExitoso() {
-        stubDependenciasComunes(true);
-        when(sunatProvider.consultar(anyMap(), eq(RUC_VALIDO)))
-                .thenReturn(Map.of(
-                        "razon_social", "EXTECH SAC",
-                        "estado", "ACTIVO",
-                        "condicion", "HABIDO"));
+        @BeforeEach
+        void setUp() {
+                mapper = new DecolectaSunatMapper(objectMapper);
+                SunatProviderFactory factory = new SunatProviderFactory(List.of(sunatProvider));
+                useCase = new ConsultarRucUseCase(
+                                sunatRepository, consumoRepository, usuarioRepository,
+                                factory, mapper, objectMapper);
+        }
 
-        SunatResponse resp = useCase.consultarRuc(USUARIO_ID, RUC_VALIDO);
+        @Test
+        void consultaExitosa_retornaResponseYRegistraConsumoExitoso() {
+                stubDependenciasComunes(true);
+                when(sunatProvider.consultar(anyMap(), eq(RUC_VALIDO)))
+                                .thenReturn(Map.of(
+                                                "razon_social", "EXTECH SAC",
+                                                "estado", "ACTIVO",
+                                                "condicion", "HABIDO"));
 
-        assertThat(resp.ok()).isTrue();
-        assertThat(resp.data().razonSocial()).isEqualTo("EXTECH SAC");
-        assertThat(resp.data().estado()).isEqualTo("ACTIVO");
-        verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
-                anyString(), eq(true), eq(true), anyString());
-    }
+                SunatResponse resp = useCase.consultarRuc(USUARIO_ID, RUC_VALIDO);
 
-    @Test
-    void sinPlanActivo_lanzaLimiteAlcanzadoYRegistraFallo() {
-        stubDependenciasComunes(false); // sin plan
+                assertThat(resp.ok()).isTrue();
+                assertThat(resp.data().razonSocial()).isEqualTo("EXTECH SAC");
+                assertThat(resp.data().estado()).isEqualTo("ACTIVO");
+                verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
+                                anyString(), eq(true), eq(true), anyString());
+        }
 
-        assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, RUC_VALIDO))
-                .isInstanceOf(LimiteAlcanzadoException.class)
-                .hasMessageContaining("plan activo");
+        @Test
+        void sinPlanActivo_lanzaLimiteAlcanzadoYRegistraFallo() {
+                stubDependenciasComunes(false); // sin plan
 
-        verify(sunatProvider, never()).consultar(anyMap(), anyString());
-        verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
-                anyString(), eq(false), eq(true), anyString());
-    }
+                assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, RUC_VALIDO))
+                                .isInstanceOf(LimiteAlcanzadoException.class)
+                                .hasMessageContaining("plan activo");
 
-    @Test
-    void proveedorCaido_lanzaServicioNoDisponibleYRegistraFallo() {
-        stubDependenciasComunes(true);
-        when(sunatProvider.consultar(anyMap(), eq(RUC_VALIDO)))
-                .thenThrow(new RuntimeException("timeout"));
+                verify(sunatProvider, never()).consultar(anyMap(), anyString());
+                verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
+                                anyString(), eq(false), eq(true), anyString());
+        }
 
-        assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, RUC_VALIDO))
-                .isInstanceOf(ServicioNoDisponibleException.class);
+        @Test
+        void proveedorCaido_lanzaServicioNoDisponibleYRegistraFallo() {
+                stubDependenciasComunes(true);
+                when(sunatProvider.consultar(anyMap(), eq(RUC_VALIDO)))
+                                .thenThrow(new RuntimeException("timeout"));
 
-        verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
-                anyString(), eq(false), eq(true), anyString());
-    }
+                assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, RUC_VALIDO))
+                                .isInstanceOf(ServicioNoDisponibleException.class);
 
-    @Test
-    void rucInvalido_noLlamaProveedorNiRegistraConsumo() {
-        when(usuarioRepository.obtenerNombrePorId(USUARIO_ID)).thenReturn("USUARIO TEST");
+                verify(consumoRepository).registrar(eq(USUARIO_ID), eq(FUNCION_ID), anyString(),
+                                anyString(), eq(false), eq(true), anyString());
+        }
 
-        assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, "123"))
-                .isInstanceOf(RuntimeException.class);
+        @Test
+        void rucInvalido_noLlamaProveedorNiRegistraConsumo() {
+                when(usuarioRepository.obtenerNombrePorId(USUARIO_ID)).thenReturn("USUARIO TEST");
 
-        verifyNoInteractions(sunatProvider);
-        verify(consumoRepository, never()).registrar(anyInt(), anyInt(), anyString(),
-                anyString(), anyBoolean(), anyBoolean(), anyString());
-    }
+                assertThatThrownBy(() -> useCase.consultarRuc(USUARIO_ID, "123"))
+                                .isInstanceOf(RuntimeException.class);
 
-    // ------------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------------
+                verifyNoInteractions(sunatProvider);
+                verify(consumoRepository, never()).registrar(anyInt(), anyInt(), anyString(),
+                                anyString(), anyBoolean(), anyBoolean(), anyString());
+        }
 
-    private void stubDependenciasComunes(boolean conPlanActivo) {
-        when(usuarioRepository.obtenerNombrePorId(USUARIO_ID)).thenReturn("USUARIO TEST");
+        // ------------------------------------------------------------------------
+        // Helpers
+        // ------------------------------------------------------------------------
 
-        Map<String, Object> config = new HashMap<>();
-        config.put("ApiServicesFuncionId", FUNCION_ID);
-        config.put("EndpointExterno", "https://api.fake/sunat?numero=");
-        config.put("Token", "TOKEN_EN_CLARO");
-        config.put("Autorizacion", "Bearer {TOKEN}");
-        when(sunatRepository.resolverConfiguracion(USUARIO_ID)).thenReturn(config);
+        private void stubDependenciasComunes(boolean conPlanActivo) {
+                when(usuarioRepository.obtenerNombrePorId(USUARIO_ID)).thenReturn("USUARIO TEST");
 
-        Map<String, Object> validacion = new HashMap<>();
-        validacion.put("NombrePlan", conPlanActivo ? "PROFESIONAL" : "");
-        validacion.put("ConsumoActual", 10);
-        validacion.put("LimiteMaximo", 1000);
-        validacion.put("PuedeContinuar", conPlanActivo ? 1 : 0);
-        when(consumoRepository.validarLimitePlan(USUARIO_ID, FUNCION_ID)).thenReturn(validacion);
-    }
+                Map<String, Object> config = new HashMap<>();
+                config.put("ApiServicesFuncionId", FUNCION_ID);
+                config.put("EndpointExterno", "https://api.fake/sunat?numero=");
+                config.put("Token", "TOKEN_EN_CLARO");
+                config.put("Autorizacion", "Bearer {TOKEN}");
+                when(sunatRepository.resolverConfiguracion(USUARIO_ID)).thenReturn(config);
+
+                Map<String, Object> validacion = new HashMap<>();
+                validacion.put("NombrePlan", conPlanActivo ? "PROFESIONAL" : "");
+                validacion.put("ConsumoActual", 10);
+                validacion.put("LimiteMaximo", 1000);
+                validacion.put("PuedeContinuar", conPlanActivo ? 1 : 0);
+                when(consumoRepository.validarLimitePlan(USUARIO_ID, FUNCION_ID)).thenReturn(validacion);
+        }
 }
